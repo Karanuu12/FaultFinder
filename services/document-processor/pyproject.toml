@@ -1,0 +1,27 @@
+[project]
+name = "timmo-document-processor"
+version = "0.1.0"
+description = "PDF parsing, OCR, and chunking micro-service for the Timmo RAG pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pypdf>=5.0",
+    "pymupdf>=1.24",
+    "python-multipart>=0.0.12",
+    "pydantic>=2.9",
+]
+
+[project.optional-dependencies]
+ocr = [
+    "pytesseract>=0.3.13",
+    "pillow>=10.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+]
+
+[tool.uv]
+package = false

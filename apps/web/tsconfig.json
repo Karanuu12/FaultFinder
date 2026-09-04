@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@timmo/rag": ["../../packages/rag/src/index.ts"],
+      "@timmo/rag/*": ["../../packages/rag/src/*"]
     }
   },
   "include": [
@@ -28,6 +30,7 @@
     "**/*.ts",
     "**/*.tsx",
     "**/*.mts",
+    "**/*.d.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

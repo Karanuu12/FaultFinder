@@ -34,3 +34,14 @@ pnpm-debug.log*
 # qdrant local data
 .qdrant/
 qdrant_storage/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+uv.lock
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
