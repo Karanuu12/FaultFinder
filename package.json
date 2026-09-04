@@ -7,7 +7,6 @@
     "dev": "concurrently -n python,next -c yellow,cyan 'pnpm dev:python' 'pnpm dev:next'",
     "dev:next": "pnpm --filter @timmo/web dev",
     "dev:python": "cd services/document-processor && uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload --log-level info",
-    "seed": "pnpm --filter @timmo/web exec tsx ../../scripts/seed.ts",
     "build": "pnpm --filter @timmo/web build",
     "start": "pnpm --filter @timmo/web start",
     "lint": "pnpm --filter @timmo/web lint",
