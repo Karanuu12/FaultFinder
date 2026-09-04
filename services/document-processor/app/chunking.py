@@ -20,10 +20,19 @@ def chunk_pages(req: Any, max_chars: int = 1800, overlap: int = 120) -> list[dic
     seen: set[str] = set()
 
     for page in req.pages or []:
-        page_no = int(page.get("page", 1))
-        section = str(page.get("section") or "")
+        # Accept Pydantic model objects OR plain dicts
+        if hasattr(page, "page"):
+            page_no = page.page
+            section = page.section or ""
+            text = page.text or ""
+            images = page.images or []
+        else:
+            page_no = int(page.get("page", 1))
+            section = str(page.get("section") or "")
+            text = str(page.get("text") or "")
+            images = page.get("images", [])
 
-        segments = _segment_page(page_no, page.get("text", ""))
+        segments = _segment_page(page_no, text)
         for seg_section, text in segments:
             active_section = "{}. {}".format(section, seg_section).strip(". ").strip() if seg_section else section
             for piece in _split_long(text, max_chars=max_chars, overlap=overlap):
@@ -35,6 +44,7 @@ def chunk_pages(req: Any, max_chars: int = 1800, overlap: int = 120) -> list[dic
                     "section": active_section,
                     "text": piece.strip(),
                     "char_count": len(piece),
+                    "images": images,
                 }
                 key = chunk["id"]
                 if key in seen:
@@ -97,25 +107,42 @@ def _split_long(text: str, max_chars: int, overlap: int) -> list[str]:
         return [text]
     pieces: list[str] = []
     rest = text
+    guard = 0
     while len(rest) > max_chars:
-        cut = _find_cut(rest, max_chars)
+        cut = _find_cut(rest, max_chars, overlap)
+        # Guarantee forward progress if the found cut is too close to the start.
+        if cut <= overlap:
+            cut = max_chars
         piece = rest[:cut].strip()
+        if not piece.strip():
+            cut = max_chars
+            piece = rest[:cut].strip()
         pieces.append(piece)
-        rest = rest[max(0, cut - overlap):]
+        next_start = max(0, cut - overlap)
+        if next_start >= len(rest):
+            break
+        rest = rest[next_start:]
+        guard += 1
+        if guard > 10_000:  # hard safety: never infinite-loop on hostile input
+            break
     if rest.strip():
         pieces.append(rest.strip())
     return pieces
 
 
-def _find_cut(text: str, max_chars: int) -> int:
+def _find_cut(text: str, max_chars: int, overlap: int) -> int:
     window = text[max_chars:max_chars + WINDOW].lower()
     for i, c in enumerate(window):
         if c == "\n":
             return max_chars + i + 1
-    for i in range(max_chars, 0, -1):
+    # Search backward from the boundary, but never return a cut below `overlap`
+    # so each iteration makes forward progress.
+    lo = overlap + 1
+    hi = min(max_chars, len(text) - 1)
+    for i in range(hi, lo, -1):
         if text[i] in ".!?":
             return i + 1
-    for i in range(min(max_chars, len(text)) - 1, 0, -1):
+    for i in range(hi, lo, -1):
         if text[i] in " \t":
             return i
     return max_chars
