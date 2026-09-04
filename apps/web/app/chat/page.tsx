@@ -11,8 +11,10 @@ import {
   FileText,
   Loader2,
   Search,
+  Upload,
   User,
   Wrench,
+  Files,
 } from "lucide-react";
 
 interface Citation {
@@ -296,9 +298,16 @@ export default function ChatPage() {
             FaultFinder
           </span>
         </div>
-        <span className="text-[11px] font-medium text-neutral-400">
-          RAG Troubleshooting
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] font-medium text-neutral-400">
+            RAG Troubleshooting
+          </span>
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800 transition-colors">
+            <Upload className="size-3.5" />
+            Upload PDF
+            <input type="file" accept=".pdf" className="hidden" disabled />
+          </label>
+        </div>
       </header>
 
       {/* Messages */}
@@ -316,6 +325,34 @@ export default function ChatPage() {
                 Type an error code, a symptom, or a machine name. Get a cited
                 answer from the loaded manuals.
               </p>
+
+              {/* Data Collection Info */}
+              <div className="mt-4 grid grid-cols-2 gap-3 w-full max-w-md">
+                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
+                  <div className="flex items-center gap-2">
+                    <Files className="size-4 text-neutral-400 shrink-0" />
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Files</p>
+                  </div>
+                  <p className="mt-1 text-lg font-bold text-neutral-900">5</p>
+                  <p className="text-[10px] text-neutral-500">RoboInject, Press-2000, Press-2001, ISO-9001, PowerFlex-525</p>
+                </div>
+                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Chunks Indexed</p>
+                  <p className="mt-0.5 text-lg font-bold text-neutral-900">81</p>
+                  <p className="text-[10px] text-neutral-500">Semantic chunks with page/section metadata</p>
+                </div>
+                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Vector Dims</p>
+                  <p className="mt-0.5 text-lg font-bold text-neutral-900">768</p>
+                  <p className="text-[10px] text-neutral-500">nomic-embed-text via Ollama (local)</p>
+                </div>
+                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Vector DB</p>
+                  <p className="mt-0.5 text-lg font-bold text-neutral-900">Qdrant</p>
+                  <p className="text-[10px] text-neutral-500">Cosine similarity, 81 points</p>
+                </div>
+              </div>
+
               <SuggestedQueries onSelect={handleSubmit} />
             </div>
           )}

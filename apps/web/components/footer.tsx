@@ -36,7 +36,7 @@ export function Footer() {
               href="/"
               className="text-lg font-bold tracking-wide hover:opacity-85 transition-opacity font-gothic"
             >
-              Timmo
+FaultFinder
             </Link>
           </div>
           <div className="flex items-center gap-1">
@@ -68,7 +68,7 @@ export function Footer() {
         </nav>
       </div>
       <div className="flex items-center justify-between gap-4 border-t py-4 text-muted-foreground text-sm">
-        <p>&copy; {new Date().getFullYear()} Timmo. All rights reserved.</p>
+        <p>&copy; {new Date().getFullYear()} FaultFinder. All rights reserved.</p>
 
         <p className="inline-flex items-center gap-1">
           <span>Built with ❤️ by</span>

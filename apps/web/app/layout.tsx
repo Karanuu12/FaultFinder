@@ -12,17 +12,17 @@ const fontMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Timmo — Beautiful Focus Timer, Heatmaps & Leaderboards",
+  title: "FaultFinder — RAG Machine Troubleshooting System",
   description:
-    "Timmo is a minimalist, premium focus application featuring workspaces, countdowns, activity heatmaps, global leaderboards, and customizable aesthetics.",
+    "FaultFinder is an intelligent RAG troubleshooting assistant — type an error code, symptom, or machine name and get a precise, cited answer from the correct manual.",
   icons: {
     icon: "/icon.webp",
     apple: "/icon.webp",
   },
   openGraph: {
-    title: "Timmo — Beautiful Focus Timer, Heatmaps & Leaderboards",
+    title: "FaultFinder — RAG Machine Troubleshooting System",
     description:
-      "Timmo is a minimalist, premium focus application featuring workspaces, countdowns, activity heatmaps, global leaderboards, and customizable aesthetics.",
+      "FaultFinder is an intelligent RAG troubleshooting assistant — type an error code, symptom, or machine name and get a precise, cited answer from the correct manual.",
     images: ["/og-image.png"],
   },
 };

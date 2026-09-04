@@ -66,25 +66,10 @@ export class GroqClient {
       ? `\nThe user specifically mentioned the machine: "${machineScope}". Prioritize its manual.`
       : "";
 
-    const systemPrompt = [
-      "You are a precise factory-troubleshooting assistant. Your job is to answer the user's question",
-      "SOLELY from the retrieved context blocks below. NEVER invent an answer that isn't supported.",
-      "",
-      "Rules:",
-      "1. If the context is empty or insufficient, set refusals and return confidence 'low'.",
-      "2. If the same error code appears in multiple manuals, cite only the one matching the machine.",
-      "3. Every claim must be traceable to a citation in the context.",
-      "4. Output structured JSON (no markdown, no code fences).",
-      "5. Follow-up questions: use conversation history for continuity.",
-      machineHint,
-    ].filter(Boolean).join("\n");
+    const systemPrompt = "You read machine manuals and answer questions. The context below is from the manuals. Extract the answer and output JSON. Use the context, cite the source, keep answers short.";
 
-    const userPrompt =
-      `CONTEXT BLOCKS:\n${contextBlock}\n\n${machineHint}\n\n` +
-      `USER QUESTION: ${message}\n\n` +
-      `CRITICAL: You must respond with ONLY valid JSON. No markdown. No explanation. No code fences. No backticks.\n` +
-      `JSON format:\n` +
-      `{"error_code": "E101", "meaning": "Short meaning here", "probable_causes": ["Cause 1", "Cause 2"], "corrective_action": [{"step": 1, "action": "Step 1 description"}], "citations": [{"document_id": "Manual-Name", "title": "Manual Title", "page": 123, "section": "Section Name"}], "confidence": "high", "refusals": []}`;
+    const userPrompt = "CONTEXT:\n" + contextBlock + "\n\nQUESTION: " + message + "\n\nOutput JSON: " +
+      '{"error_code":"E101","meaning":"short meaning","probable_causes":["cause 1"],"corrective_action":[{"step":1,"action":"do this"}],"citations":[{"document_id":"x","title":"x","page":1,"section":"x"}],"confidence":"high","refusals":[]}';
 
     const messages: { role: string; content: string }[] = [
       { role: "system", content: systemPrompt },
@@ -99,7 +84,8 @@ export class GroqClient {
       max_tokens: 2048,
     };
 
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+    // Retry once on 429 (Groq free tier rate limit) with backoff
+    let res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -107,6 +93,18 @@ export class GroqClient {
       },
       body: JSON.stringify(body),
     });
+
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, 3500));
+      res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => "");

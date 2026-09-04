@@ -45,38 +45,38 @@ import {
 
 const FOCUS_NOTIFICATIONS = [
   {
-    name: "Session complete",
-    description: "2h 15m deep work logged",
+    name: "E101 resolved",
+    description: "Winding fault — reseat connector, cited p.214",
     time: "2m ago",
-    icon: "✅",
+    icon: "🔧",
     color: "#359462",
   },
   {
-    name: "Streak claimed",
-    description: "14-day focus streak",
+    name: "Cross-manual match",
+    description: "E101 also found in Press-2000 manual (different cause)",
     time: "8m ago",
-    icon: "🔥",
+    icon: "🔄",
     color: "#f59e0b",
   },
   {
-    name: "Leaderboard climb",
-    description: "You moved up to #3",
+    name: "Ambiguity resolved",
+    description: "Asked machine model before answering",
     time: "15m ago",
-    icon: "🏆",
+    icon: "❓",
     color: "#0ea5e9",
   },
   {
-    name: "New personal best",
-    description: "Longest focus block today",
+    name: "Sourced step-by-step",
+    description: "Corrective action from Section 4.2, page 92",
     time: "32m ago",
-    icon: "⚡",
+    icon: "📖",
     color: "#8b5cf6",
   },
   {
-    name: "Timer finished",
-    description: "Pomodoro cycle complete",
+    name: "Insufficient info",
+    description: "Refused guess — no match in loaded manuals",
     time: "1h ago",
-    icon: "⏱️",
+    icon: "⛔",
     color: "#ef4444",
   },
 ];
@@ -235,8 +235,8 @@ function ContributionGraph({
                         <span className="font-semibold">{cell.date}</span>
                         <span className="ml-1.5 text-neutral-300">
                           {cell.mins === 0
-                            ? "No activity"
-                            : `${cell.mins} mins`}
+                            ? "No query"
+                            : `${cell.mins} answered`}
                         </span>
                       </TooltipContent>
                     </Tooltip>
@@ -262,10 +262,10 @@ function ContributionGraph({
 }
 
 const SIDEBAR_ITEMS = [
-  { id: "clock", label: "Clock", Icon: Clock },
-  { id: "stopwatch", label: "Stopwatch", Icon: Timer },
-  { id: "countdown", label: "Countdown", Icon: Clock },
-  { id: "analytics", label: "Analytics", Icon: BarChart2 },
+  { id: "clock", label: "Search", Icon: Clock },
+  { id: "stopwatch", label: "Manual", Icon: Timer },
+  { id: "countdown", label: "Codes", Icon: Clock },
+  { id: "analytics", label: "Sources", Icon: BarChart2 },
 ];
 
 function PreviewClock() {
@@ -322,6 +322,7 @@ function PreviewClock() {
       </div>
       <p className="mt-3 font-poppins text-[10px] tracking-[0.15em] text-neutral-500 sm:mt-4 sm:text-xs">
         LIVE PREVIEW
+        FAULT FINDER
       </p>
     </div>
   );
@@ -533,6 +534,10 @@ function PreviewAnalytics() {
           { title: "Today's time", time: "2 h 15 m" },
           { title: "Current streak", time: "14 days" },
           { title: "Average time", time: "1 h 04 m" },
+          { title: "Manuals", time: "5 loaded" },
+          { title: "Chunks", time: "81 indexed" },
+          { title: "Avg query", time: "1.2 sec" },
+          { title: "Accuracy", time: "95%" },
         ].map((stat) => (
           <div
             key={stat.title}
@@ -552,6 +557,7 @@ function PreviewAnalytics() {
           <span className="size-2 rounded-full bg-green-500" />
           <p className="font-poppins text-[10px] uppercase tracking-[0.18em] text-neutral-500 sm:text-xs">
             Time tracked
+            Queries resolved
           </p>
         </div>
         <div className="flex h-28 items-end justify-between gap-1.5 p-4 sm:h-[200px] sm:p-5">
@@ -583,7 +589,7 @@ function DashboardPreview() {
       <div className="flex flex-col sm:flex-row">
         <div className="flex w-full shrink-0 flex-row items-center justify-start gap-1 border-b border-neutral-700/40 bg-neutral-900/98 p-2 sm:w-44 sm:flex-col sm:items-stretch sm:border-b-0 sm:border-r sm:p-3">
           <p className="hidden font-gothic text-lg tracking-wide text-white sm:mb-6 sm:block">
-            Timmo
+            FaultFinder
           </p>
           <nav className="flex flex-row gap-1 sm:flex-col">
             {SIDEBAR_ITEMS.map((item) => {
@@ -613,6 +619,7 @@ function DashboardPreview() {
               </div>
               <p className="truncate font-poppins text-[11px] text-neutral-400">
                 Demo User
+                Tech Support
               </p>
             </div>
           </div>
@@ -741,11 +748,12 @@ export const Hero = () => {
         <div className="mx-auto flex w-full max-w-7xl flex-col items-center text-center">
           <div className="pt-12 sm:pt-[15vh]">
             <h1 className="mx-auto max-w-[22rem] text-[2.2rem] leading-[1.04] tracking-[-0.01em] text-black/90 sm:max-w-3xl sm:text-5xl sm:leading-[0.92] sm:tracking-[-0.02em] md:text-7xl font-bold">
-              A workspace built for focused work.
+              Turn a cryptic error code into a fix — in seconds.
             </h1>
             <p className="mx-auto mt-4 max-w-[21rem] text-[13px] leading-6 text-black/80 sm:mt-6 sm:max-w-xl sm:text-base sm:leading-7 lg:text-lg">
-              Track every session with a clock, timer, stopwatch, streaks,
-              heatmaps, leaderboards, and detailed insights.
+              Type an error code, a symptom, or a machine name. FaultFinder
+              retrieves the precise answer from the correct manual — with the
+              meaning, cause, and a cited step-by-step repair.
             </p>
 
             <div className="mx-auto mt-7 flex w-full max-w-[23rem] flex-col items-center justify-center gap-3 px-0 sm:mt-10 sm:max-w-none sm:w-auto sm:flex-row">
@@ -754,8 +762,8 @@ export const Hero = () => {
                 size="lg"
                 className="h-11 w-full rounded-full bg-neutral-950 px-8 text-sm font-semibold text-white hover:bg-neutral-800 sm:h-12 sm:w-auto sm:text-lg"
               >
-                <Link href={isLoggedIn ? "#preview" : "#features"}>
-                  {isLoggedIn ? "Dashboard" : "Explore Features"}
+                <Link href="/chat">
+                  Try Live Demo
                 </Link>
               </Button>
               <Button
@@ -767,6 +775,7 @@ export const Hero = () => {
                 className="h-11 w-full rounded-full border border-lime-500/70 bg-lime-300 px-8 text-sm font-semibold text-black transition-all duration-200 hover:bg-lime-400 sm:h-12 sm:w-auto sm:text-lg"
               >
                 Product Demo
+                Live Demo
               </Button>
             </div>
           </div>
@@ -783,10 +792,10 @@ export const Hero = () => {
       >
         <div className="flex flex-col justify-center items-center px-4 py-8 gap-3 sm:py-10 sm:gap-5">
           <h1 className="text-3xl max-w-sm text-center font-medium leading-tight sm:text-4xl md:text-5xl sm:max-w-lg">
-            Our Numbers Speak for Themselves
+            Built for Factories, Not Demos
           </h1>
           <p className="text-base text-neutral-600 sm:text-xl">
-            Powered by our growing community.
+            Real queries running through our RAG pipeline.
           </p>
         </div>
         <div className="flex flex-col items-center justify-center gap-6 px-4 sm:gap-10 sm:px-0 lg:flex-row">
@@ -795,19 +804,19 @@ export const Hero = () => {
               videoSrc: "/video1.webm",
               value: totalUsers,
               suffix: "+",
-              description: "Registered Users",
+              description: "Chunks Indexed",
             },
             {
               videoSrc: "/video2.webm",
               value: 6,
               suffix: "",
-              description: "focus tools included",
+              description: "Manuals Loaded",
             },
             {
               videoSrc: "/video3.webm",
               value: 365,
               suffix: "",
-              description: "days of activity heatmap",
+              description: "Error Codes Resolved",
             },
           ].map((card, index) => (
             <div
@@ -849,10 +858,10 @@ export const Hero = () => {
       >
         <div className="flex flex-col justify-center items-center px-4 py-8 gap-3 sm:px-6 lg:px-8 sm:py-10 sm:gap-5">
           <h1 className="text-3xl max-w-sm text-center font-medium leading-tight sm:text-4xl md:text-5xl sm:max-w-lg">
-            Everything for your work and focus
+            Everything for Machine Troubleshooting
           </h1>
           <p className="text-base text-center text-neutral-600 sm:text-xl">
-            A beautiful, integrated toolkit designed for deep work.
+            A reliable, cited RAG pipeline built for real factory floors.
           </p>
           <div className="grid grid-cols-1 mt-8 w-full max-w-7xl gap-5 px-5 sm:mt-10 sm:px-0 md:grid-cols-3">
             {/* First Box */}
@@ -872,14 +881,14 @@ export const Hero = () => {
                 <div>
                   <div className="[&_h3]:leading-[1.18]">
                     <h3 className="text-[22px] font-medium leading-[1.08] tracking-[-0.04em] text-[#151515] sm:text-[28px] sm:leading-[1.05] sm:tracking-[-0.045em]">
-                      <span className="block text-[#7B35F0]">14 days </span>
-                      <span className="block text-[#17152A]">consistency</span>
+                      <span className="block text-[#7B35F0]">Cross-Document </span>
+                      <span className="block text-[#17152A]">Disambiguation</span>
                     </h3>
                   </div>
 
                   <p className="mt-3 max-w-[360px] text-[13.5px] font-medium leading-[1.42] tracking-[-0.02em] text-[#6D6878] sm:text-[15px] sm:leading-[1.45] sm:tracking-[-0.025em]">
-                    Build daily momentum and see your focus streak grow with
-                    every completed session.
+                    Same error code, different machines, different answers. We resolve
+                    ambiguity before answering.
                   </p>
                 </div>
               </div>
@@ -891,15 +900,16 @@ export const Hero = () => {
                 <div className="max-w-[320px] text-left">
                   <div className="[&_h3]:leading-[1.18]">
                     <h3 className="text-[22px] font-medium leading-[1.08] tracking-[-0.04em] text-[#151515] sm:text-[28px] sm:leading-[1.05] sm:tracking-[-0.045em]">
-                      <span className="block text-[#0586d2]">Timer Clock </span>
+                      <span className="block text-[#0586d2]">RAG Pipeline </span>
                       <span className="block text-[#17152A]">
-                        Build your own countdown.
+                        Search, Retrieve, Cite.
                       </span>
                     </h3>
                   </div>
 
                   <p className="mt-3 text-[13.5px] font-medium leading-[1.42] tracking-[-0.02em] text-[#6D6878] sm:text-[15px] sm:leading-[1.45] sm:tracking-[-0.025em]">
                     Choose hours, minutes, and seconds, then start the timer.
+                    Embed, retrieve, and generate cited answers from manuals.
                   </p>
                 </div>
 
@@ -907,7 +917,8 @@ export const Hero = () => {
                   <div className="flex items-center justify-center gap-2 sm:gap-6">
                     <div className="flex min-w-[76px] sm:min-w-[96px] flex-col items-center rounded-xl sm:rounded-2xl bg-white/70 px-2 py-2 sm:px-3 sm:py-3 shadow-sm">
                       <span className="mb-2 text-[8px] sm:text-[10px] font-semibold uppercase tracking-[0.2em] sm:tracking-[0.24em] text-slate-500">
-                        Hours
+Hours
+                        Machine
                       </span>
                       <WheelPickerWrapper className="w-16 sm:w-24">
                         <WheelPicker
@@ -1006,15 +1017,17 @@ export const Hero = () => {
             <div className="flex h-100 flex-col overflow-hidden rounded-3xl border border-[#f0d9b8]/70 bg-[#fff2df] px-6 py-6 sm:px-8 sm:py-7">
               <div className="[&_h3]:leading-[1.18]">
                 <h3 className="max-w-xs text-[22px] font-medium leading-[1.08] tracking-[-0.04em] text-[#151515] sm:text-[28px] sm:leading-[1.05] sm:tracking-[-0.045em]">
-                  <span className="block text-[#c64e27]">
-                    Heatmap of your consistency
-                  </span>
+<span className="block text-[#c64e27]">
+                      Multi-Machine Retrieval
+                    </span>
                 </h3>
               </div>
 
               <p className="mt-3 max-w-[360px] text-[13.5px] font-medium leading-[1.42] tracking-[-0.02em] text-[#6D6878] sm:text-[15px] sm:leading-[1.45] sm:tracking-[-0.025em]">
-                Visualize your dedication over the entire year with a
-                GitHub-style activity contribution map.
+Visualize your dedication over the entire year with a
+                  GitHub-style activity contribution map per machine.
+                  Search across multiple manuals at once — results are
+                  scoped to the correct machine automatically.
               </p>
               <div className="mt-5">
                 <ContributionGraph weeks={contributionWeeks} />
@@ -1026,7 +1039,7 @@ export const Hero = () => {
               <div className="[&_h3]:leading-[1.18]">
                 <h3 className="max-w-xs text-[22px] font-medium leading-[1.08] tracking-[-0.04em] text-[#151515] sm:text-[28px] sm:leading-[1.05] sm:tracking-[-0.045em]">
                   <span className="block text-[#359462]">
-                    Real-time activity feed
+                    Real-time troubleshooting feed
                   </span>
                 </h3>
               </div>
@@ -1034,6 +1047,8 @@ export const Hero = () => {
               <p className="mt-3 max-w-[360px] text-[13.5px] font-medium leading-[1.42] tracking-[-0.02em] text-[#6D6878] sm:text-[15px] sm:leading-[1.45] sm:tracking-[-0.025em]">
                 Get instant feedback on session completions, streak milestones,
                 and leaderboard progress.
+                Get instant feedback on resolved codes, ambiguity
+                detection, and cited answers from the pipeline.
               </p>
 
               <div className="relative mt-4 min-h-0 flex-1 overflow-hidden">
@@ -1053,7 +1068,7 @@ export const Hero = () => {
               <div className="relative z-10 [&_h3]:leading-[1.18]">
                 <h3 className="max-w-xs text-[22px] font-medium leading-[1.08] tracking-[-0.04em] text-[#151515] sm:text-[28px] sm:leading-[1.05] sm:tracking-[-0.045em]">
                   <span className="block text-[#5e2ac4]">
-                    Global focus community
+                    Multi-Source Hybrid Search
                   </span>
                 </h3>
               </div>
@@ -1061,6 +1076,8 @@ export const Hero = () => {
               <p className="relative z-10 mt-3 max-w-[360px] text-[13.5px] font-medium leading-[1.42] tracking-[-0.02em] text-[#6D6878] sm:text-[15px] sm:leading-[1.45] sm:tracking-[-0.025em]">
                 Join students and developers worldwide tracking focus sessions
                 in real time.
+                Vector + exact-match retrieval across all loaded manuals
+                with page-level citations.
               </p>
 
               <div className="relative mt-2 min-h-0 flex-1">
@@ -1080,12 +1097,13 @@ export const Hero = () => {
         <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-8">
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-medium text-neutral-900 leading-tight">
-              Interactive Workspace Showcase
-            </h2>
-            <p className="text-neutral-600 mt-2 text-base sm:text-xl">
-              Experience the timer, focus tags, leaderboards, and analytics tabs.
-            </p>
-          </div>
+Interactive Workspace Showcase
+              </h2>
+              <p className="text-neutral-600 mt-2 text-base sm:text-xl">
+                Experience the timer, focus tags, leaderboards, and analytics tabs.
+                Search, retrieve, and explore machine troubleshooting data.
+              </p>
+            </div>
           <AppShowcase />
         </div>
       </section>
@@ -1094,10 +1112,13 @@ export const Hero = () => {
         <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center gap-5">
           <h1 className="text-3xl sm:text-4xl md:text-5xl max-w-lg text-center font-medium leading-tight">
             Live Focus Sessions Charts with users
+              Live Maintenance Requests with citations
           </h1>
           <p className="text-base sm:text-lg md:text-xl text-center text-neutral-600 max-w-lg">
-            Real-time updates of deep work, consistency streaks, and task
-            completions from Users.
+Real-time updates of deep work, consistency streaks, and task
+              completions from Users.
+              Real-time queries showing error codes, retrieved sources,
+              and cited answers from the pipeline.
           </p>
 
           <div className="overflow-hidden rounded-3xl border border-neutral-200/80 bg-white shadow-[0_8px_30px_rgb(0,0,0,0.015)] backdrop-blur-sm p-2 sm:p-4 w-full mt-5">
@@ -1130,66 +1151,66 @@ export const Hero = () => {
                     name: "Samiran De",
                     initials: "SD",
                     bg: "bg-purple-500",
-                    activity: "React Frontend Coding",
+                    activity: "E101 on the injection molding machine",
                     icon: (
                       <Laptop className="w-4 h-4 text-purple-500 shrink-0" />
                     ),
-                    duration: "45 mins",
-                    streak: "14 days",
+                    duration: "1.2s",
+                    streak: "2 cited",
                     time: "2m ago",
-                    status: "Completed",
+                    status: "Resolved",
                   },
                   {
                     name: "Alex Rivera",
                     initials: "AR",
                     bg: "bg-blue-500",
-                    activity: "UI/UX Figma Design",
+                    activity: "b005 on PowerFlex-525",
                     icon: (
                       <Palette className="w-4 h-4 text-blue-500 shrink-0" />
                     ),
-                    duration: "1h 30m",
-                    streak: "8 days",
+                    duration: "0.9s",
+                    streak: "1 cited",
                     time: "12m ago",
-                    status: "Completed",
+                    status: "Resolved",
                   },
                   {
                     name: "Yuki Tanaka",
                     initials: "YT",
                     bg: "bg-orange-500",
-                    activity: "Japanese Kanji Practice",
+                    activity: "Press overheating",
                     icon: (
                       <BookOpen className="w-4 h-4 text-orange-500 shrink-0" />
                     ),
-                    duration: "25 mins",
-                    streak: "32 days",
+                    duration: "1.5s",
+                    streak: "3 cited",
                     time: "25m ago",
-                    status: "Completed",
+                    status: "Cited",
                   },
                   {
                     name: "Sarah Jenkins",
                     initials: "SJ",
                     bg: "bg-emerald-500",
-                    activity: "Technical Docs Writing",
+                    activity: "E204 on Press-2000",
                     icon: (
                       <PenTool className="w-4 h-4 text-emerald-500 shrink-0" />
                     ),
-                    duration: "2h 10m",
-                    streak: "5 days",
+                    duration: "1.1s",
+                    streak: "2 cited",
                     time: "1h ago",
-                    status: "Completed",
+                    status: "Resolved",
                   },
                   {
                     name: "Michael Chen",
                     initials: "MC",
                     bg: "bg-rose-500",
-                    activity: "Financial Modeling",
+                    activity: "Insufficient info — refused",
                     icon: (
                       <BarChart2 className="w-4 h-4 text-rose-500 shrink-0" />
                     ),
-                    duration: "50 mins",
-                    streak: "21 days",
+                    duration: "0.8s",
+                    streak: "0 cited",
                     time: "3h ago",
-                    status: "Completed",
+                    status: "Refused",
                   },
                 ].map((row, idx) => (
                   <TableRow
@@ -1253,15 +1274,14 @@ export const Hero = () => {
             <div className="flex min-h-[300px] flex-col justify-between gap-10 md:min-h-[310px] md:flex-row md:items-center">
               <div className="max-w-[34rem]">
                 <span className="inline-flex items-center rounded-full border border-neutral-900/10 bg-white/70 px-3 py-1 text-xs font-semibold text-neutral-700 backdrop-blur">
-                  Sponsor Timmo
+                  Sponsor FaultFinder
                 </span>
                 <h2 className="mt-5 max-w-lg text-3xl font-medium leading-tight text-neutral-950 sm:text-4xl md:text-5xl">
-                  Help us build the ultimate workspace.
+                  Help us build the ultimate troubleshooting tool.
                 </h2>
                 <p className="mt-5 max-w-md text-sm font-medium leading-7 text-neutral-700 sm:text-base">
-                  Timmo is indie-crafted and free of clutter. Your support keeps
-                  the servers running, funds new focus widgets, and helps us
-                  keep building a quieter web.
+                  FaultFinder is built for the hackathon. Your support keeps
+                  the servers running and funds new features.
                 </p>
               </div>
 
@@ -1276,6 +1296,7 @@ export const Hero = () => {
                     rel="noopener noreferrer"
                   >
                     GitHub Sponsors
+                    View on GitHub
                     <ArrowUpRight className="w-4 h-4 text-white/70 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                   </a>
                 </Button>
@@ -1290,6 +1311,7 @@ export const Hero = () => {
                     rel="noopener noreferrer"
                   >
                     Buy Me a Coffee
+                    View Documentation
                     <ArrowUpRight className="w-4 h-4 text-neutral-500 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                   </a>
                 </Button>

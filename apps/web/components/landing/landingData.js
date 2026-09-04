@@ -145,12 +145,12 @@ export const weeklyFocus = [
 ];
 
 export const notifications = [
-  { name: "Session complete", action: "2h 15m deep work logged", time: "2m ago" },
-  { name: "Streak claimed", action: "14-day focus streak", time: "8m ago" },
-  { name: "Leaderboard climb", action: "You moved up to #3", time: "15m ago" },
-  { name: "New personal best", action: "Longest focus block today", time: "32m ago" },
-  { name: "Timer finished", action: "Pomodoro cycle complete", time: "1h ago" },
-  { name: "Tag unlocked", action: "Consistency badge earned", time: "2h ago" },
+  { name: "E101 resolved", action: "Winding fault cited from RoboInject-300", time: "2m ago" },
+  { name: "Cross-manual match", action: "E101 also found in Press-2000 manual", time: "8m ago" },
+  { name: "Ambiguity resolved", action: "Asked machine model before answering", time: "15m ago" },
+  { name: "Sourced step-by-step", action: "Corrective action from Section 4.2, page 92", time: "32m ago" },
+  { name: "Insufficient info", action: "Refused guess — no match in loaded manuals", time: "1h ago" },
+  { name: "New manual indexed", action: "PowerFlex-525 drive manual added", time: "2h ago" },
 ];
 
 export const streakData = {
