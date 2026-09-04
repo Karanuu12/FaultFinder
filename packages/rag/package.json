@@ -31,10 +31,15 @@
     "./pipeline": {
       "types": "./src/pipeline.ts",
       "default": "./src/pipeline.ts"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
   },
   "dependencies": {
     "@qdrant/js-client-rest": "^1.19.0",

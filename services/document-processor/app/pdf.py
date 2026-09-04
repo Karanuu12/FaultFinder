@@ -25,24 +25,26 @@ except Exception:  # pragma: no cover
 MAX_IMAGE_SIZE = 500 * 1024  # 500 KB per image
 
 
-def extract_pdf_pages(raw: bytes) -> list[dict[str, Any]]:
+def extract_pdf_pages(raw: bytes, include_images: bool = False) -> list[dict[str, Any]]:
     """Return a list of {page, section, text, images} for a raw PDF byte buffer.
 
     `images` is a list of base64-encoded JPEG/PNG thumbnails extracted from the page.
+    Image extraction is opt-in: decoding every raster on a 170-page manual is slow,
+    memory-hungry, and produces a response hundreds of megabytes large.
     """
     if _MUPDF and pymupdf is not None:
-        return _extract_mupdf(raw)
+        return _extract_mupdf(raw, include_images=include_images)
     if _PYPDF and PdfReader is not None:
         return _extract_pypdf(raw)
     raise RuntimeError("No PDF backend available (install pymupdf or pypdf).")
 
 
-def _extract_mupdf(raw: bytes) -> list[dict[str, Any]]:
+def _extract_mupdf(raw: bytes, include_images: bool = False) -> list[dict[str, Any]]:
     doc = pymupdf.open(stream=raw, filetype="pdf")  # type: ignore[attr-defined]
     pages: list[dict[str, Any]] = []
     for idx, page in enumerate(doc, start=1):
         text = page.get_text("text", sort=True).strip()
-        images = _extract_images(page, page_number=idx)
+        images = _extract_images(page, page_number=idx) if include_images else []
         pages.append({
             "page": idx,
             "section": _detect_section(text),
@@ -64,8 +66,10 @@ def _extract_images(page: pymupdf.Page, page_number: int) -> list[str]:
 
     for img_index, img_info in enumerate(image_list):
         xref = img_info[0]
-        pix = pymupdf.Pixmap(doc=page.parent, xref=xref)  # type: ignore[attr-defined]
         try:
+            # PyMuPDF takes (doc, xref) positionally; the keyword form raises
+            # "Pixmap.__init__() got an unexpected keyword argument 'doc'".
+            pix = pymupdf.Pixmap(page.parent, xref)  # type: ignore[attr-defined]
             # Skip large or tiny images
             if pix.width < 50 or pix.height < 50:
                 continue
@@ -127,3 +131,35 @@ def _looks_like_heading(line: str) -> bool:
     if letters and upper / letters > 0.6:
         return True
     return False
+
+def extract_outline(raw: bytes) -> list[dict[str, Any]]:
+    """Return the PDF's embedded bookmark tree as [{title, page_pdf, level}].
+
+    Every vendor manual in this corpus (ABB, Schneider) ships a full outline with
+    exact section titles and destination pages. Using it beats inferring headings
+    from font sizes or text patterns: it is exact, free, and it is what makes a
+    citation's section path trustworthy.
+    """
+    if not (_MUPDF and pymupdf is not None):
+        return []
+    try:
+        doc = pymupdf.open(stream=raw, filetype="pdf")  # type: ignore[attr-defined]
+        toc = doc.get_toc(simple=True) or []
+    except Exception:  # noqa: BLE001 - a missing/broken outline is not fatal
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for item in toc:
+        try:
+            level, title, page = item[0], item[1], item[2]
+        except (IndexError, TypeError):
+            continue
+        if not title or page is None or page < 1:
+            continue
+        entries.append({
+            # get_toc levels are 1-based; callers want 0-based depth.
+            "level": max(0, int(level) - 1),
+            "title": str(title).strip(),
+            "page_pdf": int(page),
+        })
+    return entries

@@ -219,12 +219,63 @@ function SuggestedQueries({ onSelect }: { onSelect: (q: string) => void }) {
   );
 }
 
+interface IndexStats {
+  documents: number;
+  chunks: number;
+  faults: number;
+  dims: number;
+  machines: string[];
+  documents_list?: { document_id: string; title: string; model?: string; pages: number }[];
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState<IndexStats | null>(null);
+  const [upload, setUpload] = useState<{
+    state: "idle" | "busy" | "done" | "error";
+    message: string;
+  }>({ state: "idle", message: "" });
   const formRef = useRef<HTMLFormElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const refreshStats = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/stats");
+      if (res.ok) setStats(await res.json());
+    } catch {
+      /* stats are cosmetic — never break the chat over them */
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refreshStats();
+  }, [refreshStats]);
+
+  const handleUpload = async (file: File) => {
+    setUpload({ state: "busy", message: `Parsing and indexing ${file.name}…` });
+    const body = new FormData();
+    body.set("file", file);
+    try {
+      const res = await fetch("/api/ingest", { method: "POST", body });
+      const data = await res.json();
+      if (!res.ok) {
+        setUpload({ state: "error", message: data.error ?? `Upload failed (${res.status})` });
+        return;
+      }
+      setUpload({
+        state: "done",
+        message: `Indexed ${data.title}: ${data.pages} pages, ${data.chunks} chunks, ${data.faults} fault codes.`,
+      });
+      refreshStats();
+    } catch (err) {
+      setUpload({
+        state: "error",
+        message: err instanceof Error ? err.message : "Upload failed",
+      });
+    }
+  };
 
   const scrollToBottom = () => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -302,10 +353,32 @@ export default function ChatPage() {
           <span className="text-[11px] font-medium text-neutral-400">
             RAG Troubleshooting
           </span>
-          <label className="flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800 transition-colors">
-            <Upload className="size-3.5" />
-            Upload PDF
-            <input type="file" accept=".pdf" className="hidden" disabled />
+          <label
+            className={cn(
+              "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors",
+              upload.state === "busy"
+                ? "cursor-wait border-neutral-200 bg-neutral-100 text-neutral-400"
+                : "cursor-pointer border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800",
+            )}
+          >
+            {upload.state === "busy" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Upload className="size-3.5" />
+            )}
+            {upload.state === "busy" ? "Indexing…" : "Upload PDF"}
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              disabled={upload.state === "busy"}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // Reset so re-selecting the same file fires change again.
+                e.target.value = "";
+                if (file) handleUpload(file);
+              }}
+            />
           </label>
         </div>
       </header>
@@ -326,32 +399,51 @@ export default function ChatPage() {
                 answer from the loaded manuals.
               </p>
 
-              {/* Data Collection Info */}
+              {/* Live index stats — read from /api/stats, not hardcoded */}
               <div className="mt-4 grid grid-cols-2 gap-3 w-full max-w-md">
                 <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
                   <div className="flex items-center gap-2">
                     <Files className="size-4 text-neutral-400 shrink-0" />
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Files</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Manuals</p>
                   </div>
-                  <p className="mt-1 text-lg font-bold text-neutral-900">5</p>
-                  <p className="text-[10px] text-neutral-500">RoboInject, Press-2000, Press-2001, ISO-9001, PowerFlex-525</p>
+                  <p className="mt-1 text-lg font-bold text-neutral-900">{stats?.documents ?? "—"}</p>
+                  <p className="text-[10px] text-neutral-500">
+                    {stats?.documents_list?.length
+                      ? stats.documents_list.map((d) => d.model || d.title).join(", ")
+                      : "Upload a PDF manual to index it"}
+                  </p>
                 </div>
                 <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Chunks Indexed</p>
-                  <p className="mt-0.5 text-lg font-bold text-neutral-900">81</p>
-                  <p className="text-[10px] text-neutral-500">Semantic chunks with page/section metadata</p>
+                  <p className="mt-0.5 text-lg font-bold text-neutral-900">{stats?.chunks ?? "—"}</p>
+                  <p className="text-[10px] text-neutral-500">Structure-aware, with page/section metadata</p>
+                </div>
+                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Fault Codes</p>
+                  <p className="mt-0.5 text-lg font-bold text-neutral-900">{stats?.faults ?? "—"}</p>
+                  <p className="text-[10px] text-neutral-500">Code → meaning → cause → corrective action</p>
                 </div>
                 <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Vector Dims</p>
-                  <p className="mt-0.5 text-lg font-bold text-neutral-900">768</p>
-                  <p className="text-[10px] text-neutral-500">nomic-embed-text via Ollama (local)</p>
-                </div>
-                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Vector DB</p>
-                  <p className="mt-0.5 text-lg font-bold text-neutral-900">Qdrant</p>
-                  <p className="text-[10px] text-neutral-500">Cosine similarity, 81 points</p>
+                  <p className="mt-0.5 text-lg font-bold text-neutral-900">{stats?.dims || "—"}</p>
+                  <p className="text-[10px] text-neutral-500">jina-embeddings-v3 (hosted, multilingual)</p>
                 </div>
               </div>
+
+              {upload.state !== "idle" && (
+                <div
+                  className={cn(
+                    "mt-1 w-full max-w-md rounded-lg px-3 py-2 text-left text-xs",
+                    upload.state === "error"
+                      ? "bg-red-50 text-red-700"
+                      : upload.state === "done"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-neutral-100 text-neutral-600",
+                  )}
+                >
+                  {upload.message}
+                </div>
+              )}
 
               <SuggestedQueries onSelect={handleSubmit} />
             </div>
@@ -386,6 +478,16 @@ export default function ChatPage() {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              // Implicit form submission does not fire for this input (the
+              // submit event never reaches the form), so Enter is wired
+              // explicitly. Without this, typing a query and pressing Enter
+              // silently does nothing and the send button looks dead.
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  handleSubmit(input);
+                }
+              }}
               placeholder="e.g. E101 on the injection molding machine"
               disabled={loading}
               className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100 disabled:opacity-50"

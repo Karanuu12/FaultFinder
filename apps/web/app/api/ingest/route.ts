@@ -1,119 +1,172 @@
 /**
- * POST /api/ingest — Upload and index a PDF manual.
- * Tries Python doc-processor (FastAPI) first, falls back to Node pdf-parse.
+ * POST /api/ingest — upload a PDF manual and index it.
+ *
+ * Flow:  PDF → parser → typed blocks → structure-aware chunks
+ *                                   → fault records (code/meaning/cause/action)
+ *                                   → Jina embeddings → local index
+ *
+ * The parser is currently the local FastAPI doc-processor. It is isolated behind
+ * `parseDocument()` so swapping in LlamaParse (which returns markdown tables,
+ * and therefore lights up the fault-table extractor) is a change to one function.
  */
-import { NextRequest, NextResponse } from "next/server";
-import { OllamaEmbeddingClient, RagPipeline, MemoryVectorStore } from "@timmo/rag";
-import { makeVectorStore } from "@/lib/rag-store";
-import { makeLLM } from "@/lib/rag-llm";
+import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
+
+import { buildBlocks } from "@timmo/rag/doc/blocks";
+import { chunkBlocks } from "@timmo/rag/doc/chunker";
+import { extractFaultRecords } from "@timmo/rag/doc/faults";
+import type { PageInput, OutlineInput } from "@timmo/rag/doc/blocks";
+import { getStore, getEmbedder } from "@/lib/rag-index";
+
+export const runtime = "nodejs";
+// A 170-page manual takes minutes to parse + embed; don't let the platform cut it off.
+export const maxDuration = 800;
 
 const PYTHON_URL = process.env.DOC_PROCESSOR_URL ?? "http://127.0.0.1:8080";
 
+/** Known machines, so chunks can be filtered by machine rather than by filename substring. */
+const MACHINE_RULES: { id: string; model: string; manufacturer: string; test: RegExp }[] = [
+  { id: "abb-acs150", model: "ACS150", manufacturer: "ABB", test: /acs\s*-?150/i },
+  { id: "abb-acs350", model: "ACS350", manufacturer: "ABB", test: /acs\s*-?350/i },
+  { id: "abb-irb4600", model: "IRB 4600", manufacturer: "ABB", test: /irb\s*-?4600|3hac033453/i },
+  { id: "schneider-atv320", model: "ATV320", manufacturer: "Schneider", test: /atv\s*-?320/i },
+  { id: "schneider-atv28", model: "ATV28", manufacturer: "Schneider", test: /atv\s*-?28/i },
+  { id: "roboinject-300", model: "RoboInject-300", manufacturer: "Synthetic", test: /roboinject/i },
+  { id: "press-2000", model: "Press-2000", manufacturer: "Synthetic", test: /press-?2000/i },
+  { id: "press-2001", model: "Press-2001", manufacturer: "Synthetic", test: /press-?2001/i },
+  { id: "powerflex-525", model: "PowerFlex-525", manufacturer: "Rockwell", test: /powerflex/i },
+];
+
+function detectMachine(filename: string, firstPages: string) {
+  const haystack = `${filename}\n${firstPages.slice(0, 4000)}`;
+  for (const rule of MACHINE_RULES) {
+    if (rule.test.test(haystack)) return rule;
+  }
+  const slug = filename
+    .replace(/\.pdf$/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
+  return { id: slug || "unknown", model: filename.replace(/\.pdf$/i, ""), manufacturer: "", test: /$^/ };
+}
+
+/** Parser adapter. Swap the body for LlamaParse when the key is available. */
+async function parseDocument(
+  file: File,
+  documentId: string,
+): Promise<{ title: string; pages: PageInput[]; outline: OutlineInput[] }> {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("document_id", documentId);
+  form.set("include_images", "false");
+
+  const res = await fetch(`${PYTHON_URL}/parse`, { method: "POST", body: form });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Parser failed (${res.status}): ${detail.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  const pages: PageInput[] = (data.pages ?? []).map((p: Record<string, unknown>) => ({
+    page: Number(p.page),
+    text: String(p.text ?? ""),
+    images: [],
+  }));
+  // The PDF's own bookmark tree — exact section titles and pages. Preferred over
+  // inferring headings from the text, which produced section labels like
+  // "4 = 380…480 V AC" on ABB manuals.
+  const outline: OutlineInput[] = (data.outline ?? []).map((o: Record<string, unknown>) => ({
+    title: String(o.title ?? ""),
+    pagePdf: Number(o.page_pdf ?? 0),
+    level: Number(o.level ?? 0),
+  }));
+  return { title: String(data.title ?? file.name), pages, outline };
+}
+
 export async function POST(request: NextRequest) {
+  const started = Date.now();
   try {
     const form = await request.formData();
     const file = form.get("file");
     if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: "file is required (multipart)" }, { status: 400 });
+      return Response.json({ error: "file is required (multipart form field 'file')" }, { status: 400 });
+    }
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      return Response.json({ error: "Only PDF files are supported." }, { status: 400 });
     }
 
-    const documentId = (form.get("document_id") as string) ?? file.name.replace(/\.pdf$/i, "");
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const documentId =
+      (form.get("document_id") as string) || file.name.replace(/\.pdf$/i, "").replace(/\s+/g, "-");
 
-    // 1. Try Python doc-processor for parsing + chunking
-    let chunks: Awaited<ReturnType<typeof parseViaPython>>;
-    try {
-      chunks = await parseViaPython(file, documentId);
-    } catch {
-      // Fallback: parse in Node with pdf-parse
-      const buffer = Buffer.from(await file.arrayBuffer());
-      chunks = await parseViaNode(buffer, file.name, documentId);
+    // 1. Parse
+    const { title, pages, outline } = await parseDocument(file, documentId);
+    if (!pages.length) {
+      return Response.json({ error: "No extractable text found in the PDF." }, { status: 422 });
     }
+
+    // 2. Identify the machine so retrieval can filter on it
+    const machine = detectMachine(file.name, pages.slice(0, 3).map((p) => p.text).join("\n"));
+
+    // 3. Blocks → chunks → fault records
+    const blocks = buildBlocks(pages, { documentId, outline });
+    const chunks = chunkBlocks(blocks, {
+      machineId: machine.id,
+      machineLabel: machine.model,
+      model: machine.model,
+      documentTitle: title,
+    });
+    const faults = extractFaultRecords(blocks, {
+      machineId: machine.id,
+      model: machine.model,
+      documentTitle: title,
+    });
 
     if (!chunks.length) {
-      return NextResponse.json({ error: "No extractable text found." }, { status: 422 });
+      return Response.json({ error: "Parsed the PDF but produced no chunks." }, { status: 422 });
     }
 
-    // 2. Embed + index
-    const embedder = new OllamaEmbeddingClient();
-    const vectorStore = makeVectorStore();
-    const llm = makeLLM();
-    const pipeline = new RagPipeline({ embedder, vectorStore, llm });
+    // 4. Embed (batched — one request per 64 chunks, not one per chunk)
+    const embedder = getEmbedder();
+    const vectors = await embedder.embedMany(chunks.map((c) => c.text));
 
-    // Delete any existing chunks for this document (re-index)
-    await vectorStore.deleteByDocument(documentId);
+    // 5. Index
+    const store = getStore();
+    store.addDocument(
+      {
+        documentId,
+        title,
+        machineId: machine.id,
+        model: machine.model,
+        pageCount: pages.length,
+        chunkCount: chunks.length,
+        faultCount: faults.length,
+        sha256,
+        indexedAt: new Date().toISOString(),
+      },
+      chunks,
+      vectors,
+      faults,
+    );
 
-    // Chunk if the Python service gave us pages (text) rather than already-chunked
-    // The Python /process endpoint returns chunks already. If we got raw pages, chunk here.
-    // For simplicity, the Python /process returns chunks, but /parse returns pages.
-    // This route uses the aggregated /process approach.
-    await pipeline.index(chunks);
-
-    return NextResponse.json({
+    return Response.json({
       document_id: documentId,
-      title: file.name,
-      page_count: 0,
-      chunk_count: chunks.length,
+      title,
+      machine_id: machine.id,
+      model: machine.model,
+      pages: pages.length,
+      chunks: chunks.length,
+      faults: faults.length,
+      fault_codes: [...new Set(faults.map((f) => f.codeRaw))].slice(0, 40),
+      dims: vectors[0]?.length ?? 0,
+      elapsed_ms: Date.now() - started,
       indexed_at: new Date().toISOString(),
     });
   } catch (err) {
     console.error("/api/ingest error:", err);
     const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return Response.json({ error: message, elapsed_ms: Date.now() - started }, { status: 500 });
   }
-}
-
-/** Parse + chunk via Python FastAPI service. */
-async function parseViaPython(
-  file: File,
-  documentId: string,
-) {
-  const formData = new FormData();
-  formData.set("file", file);
-  formData.set("document_id", documentId);
-
-  const res = await fetch(`${PYTHON_URL}/process`, {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Python /process error (${res.status}): ${detail.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  return (data.chunks ?? []).map((c: Record<string, unknown>) => ({
-    id: String(c.id),
-    document_id: String(c.document_id),
-    title: String(c.title),
-    page: Number(c.page),
-    section: String(c.section),
-    text: String(c.text),
-    char_count: Number(c.char_count),
-    images: (c.images as string[]) ?? [],
-  }));
-}
-
-/** Fallback: parse PDF in Node (simpler — just text extraction, no section). */
-async function parseViaNode(
-  buffer: Buffer,
-  filename: string,
-  documentId: string,
-) {
-  const pdfParse = (await import("pdf-parse")).default ?? (await import("pdf-parse"));
-  const data: { text: string } = await pdfParse(buffer);
-
-  const text = data.text ?? "";
-  const lines = text.split(/\n\n+/).filter(Boolean);
-
-  return lines.map((body: string, i: number) => ({
-    id: `${documentId}-node-${i}`,
-    document_id: documentId,
-    title: filename,
-    page: i + 1,
-    section: "",
-    text: body,
-    char_count: body.length,
-    images: [],
-  }));
 }

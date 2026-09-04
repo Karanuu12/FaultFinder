@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 import anyio
 
 from .chunking import chunk_pages
-from .pdf import extract_pdf_pages
+from .pdf import extract_outline, extract_pdf_pages
 
 app = FastAPI(
     title="Timmo Document Processor",
@@ -40,11 +40,18 @@ class Page(BaseModel):
     images: list[str] = Field(default_factory=list)
 
 
+class OutlineEntry(BaseModel):
+    title: str
+    page_pdf: int
+    level: int = 0
+
+
 class ParseResponse(BaseModel):
     document_id: str
     title: str = ""
     total_pages: int = 0
     pages: list[Page] = []
+    outline: list[OutlineEntry] = []
 
 
 class ChunkRequest(BaseModel):
@@ -85,8 +92,18 @@ def health() -> HealthResponse:
 
 
 @app.post("/parse", response_model=ParseResponse)
-async def parse_pdf(file: UploadFile = File(...), document_id: str = Form(...)) -> ParseResponse:
-    """Extract text + page/section metadata from an uploaded PDF."""
+async def parse_pdf(
+    file: UploadFile = File(...),
+    document_id: str = Form(...),
+    include_images: bool = Form(False),
+) -> ParseResponse:
+    """Extract text + page/section metadata from an uploaded PDF.
+
+    `include_images` defaults to False on purpose: images come back as base64
+    JPEGs, and on a 170+ page manual that turns a few megabytes of text into a
+    several-hundred-megabyte JSON response. Callers that actually want figures
+    opt in per request.
+    """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
@@ -95,7 +112,7 @@ async def parse_pdf(file: UploadFile = File(...), document_id: str = Form(...)) 
         raise HTTPException(status_code=400, detail="Empty file.")
 
     try:
-        pages = extract_pdf_pages(raw)
+        pages = extract_pdf_pages(raw, include_images=include_images)
     except Exception as exc:  # noqa: BLE001 - surface any parse failure to caller
         raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}") from exc
 
@@ -107,6 +124,7 @@ async def parse_pdf(file: UploadFile = File(...), document_id: str = Form(...)) 
         title=file.filename,
         total_pages=len(pages),
         pages=pages,
+        outline=extract_outline(raw),
     )
 
 

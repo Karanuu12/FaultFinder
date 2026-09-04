@@ -2,7 +2,7 @@
   "name": "timmo",
   "version": "0.0.1",
   "private": true,
-  "packageManager": "pnpm@latest",
+  "packageManager": "pnpm@10.15.0",
   "scripts": {
     "dev": "concurrently -n python,next -c yellow,cyan 'pnpm dev:python' 'pnpm dev:next'",
     "dev:next": "pnpm --filter @timmo/web dev",
