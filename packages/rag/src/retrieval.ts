@@ -26,16 +26,18 @@ export function expandQuery(raw: string): string[] {
  * Detect whether the query mentions a specific machine model.
  * Returns the model name or null.
  */
+export const MACHINE_PATTERNS: { name: string; patterns: RegExp[] }[] = [
+  { name: "RoboInject-300", patterns: [/\b(roboinject[- ]?300|ri[- ]?300|injection molding|injection mold)\b/i] },
+  { name: "Press-2000", patterns: [/\b(press[- ]?2000|hydraulic press)\b/i] },
+  { name: "Press-2001", patterns: [/\b(press[- ]?2001|mechanical press)\b/i] },
+  { name: "PowerFlex-525", patterns: [/\b(powerflex[- ]?525|pf[- ]?525|ac drive|variable frequency drive)\b/i] },
+];
+
 export function detectMachineScope(query: string): string | undefined {
-  const modelPatterns = [
-    /\b(RoboInject-?300|RI-?300)\b/i,
-    /\b(Press-?2000|P-?2000)\b/i,
-    /\b(Press-?2001|P-?2001)\b/i,
-    /\b(PowerFl[ei]x[\s-]?525|PF-?525|powerflex)\b/i,
-  ];
-  for (const pat of modelPatterns) {
-    const m = query.match(pat);
-    if (m) return m[1];
+  for (const m of MACHINE_PATTERNS) {
+    if (m.patterns.some((p) => p.test(query))) {
+      return m.name;
+    }
   }
   return undefined;
 }

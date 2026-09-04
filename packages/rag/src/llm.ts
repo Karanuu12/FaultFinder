@@ -82,12 +82,9 @@ export class GroqClient {
     const userPrompt =
       `CONTEXT BLOCKS:\n${contextBlock}\n\n${machineHint}\n\n` +
       `USER QUESTION: ${message}\n\n` +
-      `Respond with JSON only:\n` +
-      `{ "error_code": "E101" | null, "meaning": "...", "probable_causes": ["..."], ` +
-      `"corrective_action": [{"step": 1, "action": "..."}], ` +
-      `"citations": [{"document_id": "...", "title": "...", "page": 0, "section": "..."}], ` +
-      `"confidence": "high"|"medium"|"low", ` +
-      `"refusals": ["..."] }`;
+      `CRITICAL: You must respond with ONLY valid JSON. No markdown. No explanation. No code fences. No backticks.\n` +
+      `JSON format:\n` +
+      `{"error_code": "E101", "meaning": "Short meaning here", "probable_causes": ["Cause 1", "Cause 2"], "corrective_action": [{"step": 1, "action": "Step 1 description"}], "citations": [{"document_id": "Manual-Name", "title": "Manual Title", "page": 123, "section": "Section Name"}], "confidence": "high", "refusals": []}`;
 
     const messages: { role: string; content: string }[] = [
       { role: "system", content: systemPrompt },
@@ -99,8 +96,7 @@ export class GroqClient {
       model: this.model,
       messages,
       temperature: 0.15,
-      max_completion_tokens: 2048,
-      response_format: { type: "json_object" },
+      max_tokens: 2048,
     };
 
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -124,9 +120,18 @@ export class GroqClient {
     }
 
     const content = choice.message.content;
-    const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    const cleaned = content
+      .replace(/```json\s*/gi, "")
+      .replace(/```\s*/gi, "")
+      .trim();
+    const jsonStart = cleaned.indexOf("{");
+    const jsonEnd = cleaned.lastIndexOf("}");
+    let jsonStr = cleaned;
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+      jsonStr = cleaned.slice(jsonStart, jsonEnd + 1);
+    }
     const parsed = STRUCTURED_ANSWER_SCHEMA.parse(
-      JSON.parse(cleaned, (_key, value) => (value === null ? undefined : value)),
+      JSON.parse(jsonStr, (_key, value) => (value === null ? undefined : value)),
     );
 
     return {

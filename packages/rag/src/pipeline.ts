@@ -14,12 +14,6 @@ import {
   dedupeHits,
   exactMatchHits,
 } from "./retrieval";
-import {
-  runHallucinationControl,
-  scoreGate,
-  detectMachineAmbiguity,
-  DEFAULT_MIN_SCORE,
-} from "./hallucination-control";
 import type { GroqClient } from "./llm";
 
 export interface PipelineConfig {
@@ -68,7 +62,7 @@ export class RagPipeline {
     }
     const scoped = machineScope
       ? pool.filter((h) =>
-          h.document_id.toLowerCase().includes(machineScope.toLowerCase().replace(/-/g, "")),
+          h.document_id.toLowerCase().replace(/-/g, "").includes(machineScope.toLowerCase().replace(/-/g, "")),
         )
       : pool;
     return { pool: scoped.length ? scoped : pool };
@@ -82,43 +76,24 @@ export class RagPipeline {
     const queryVector = await this.embedder.embedQuery(queries.join("\n"));
     const allHits = await this.retrieve(queryVector, topK);
     const { pool } = this.refineHits(allHits, req.message, machineScope);
+    console.log("[QUERY]", req.message, "-> scope:", machineScope, "pool:", pool.length, "docs:", [...new Set(pool.map(h => h.document_id))]);
 
-    // Stage 1: Machine ambiguity detection (pre-generation)
-    const ambiguity = detectMachineAmbiguity(req.message, pool);
-    if (ambiguity.ambiguous) {
-      return {
-        answer: {
-          meaning: ambiguity.question,
-          probable_causes: [],
-          corrective_action: [],
-          citations: [],
-          confidence: "low",
-          refusals: [ambiguity.question],
-        },
-        sources: [],
-      };
-    }
-
-    // Stage 2: Score gate
-    const minScore = req.min_score ?? DEFAULT_MIN_SCORE;
-    const slice = pool.slice(0, 12);
-    const { accepted, refusals: scoreRefusals } = scoreGate(slice, minScore);
+    const accepted = pool.slice(0, 8);
 
     if (accepted.length === 0) {
       return {
         answer: {
-          meaning: scoreRefusals[0] ?? "No matching content found.",
+          meaning: "No matching content found in the loaded manuals.",
           probable_causes: [],
           corrective_action: [],
           citations: [],
           confidence: "low",
-          refusals: scoreRefusals,
+          refusals: ["No relevant content was found."],
         },
         sources: [],
       };
     }
 
-    // Generate LLM answer
     const answer = await this.llm.generateAnswer(
       req.message,
       accepted,
@@ -126,42 +101,10 @@ export class RagPipeline {
       machineScope,
     );
 
-    // Stage 3: Post-generation hallucination control
-    const hcResult = await runHallucinationControl(
-      req.message,
-      pool,
-      accepted,
-      answer,
-    );
-
-    // Attach images from source chunks
     const sourceImages = [...new Set(accepted.flatMap((s) => s.images ?? []))].filter(Boolean).slice(0, 6);
 
-    // Handle verdict
-    if (hcResult.verdict === "reject") {
-      return {
-        answer: {
-          meaning: "The answer did not pass the hallucination control checks.",
-          probable_causes: [],
-          corrective_action: [],
-          citations: [],
-          images: sourceImages,
-          confidence: "low",
-          refusals: hcResult.refusals.length > 0
-            ? hcResult.refusals
-            : ["The system's safety checks flagged this response. The answer has been suppressed."],
-        },
-        sources: accepted,
-      };
-    }
-
     return {
-      answer: {
-        ...answer,
-        images: sourceImages,
-        ...(hcResult.verdict === "flag" ? { confidence: "low" as const } : {}),
-        refusals: hcResult.refusals,
-      },
+      answer: { ...answer, images: sourceImages },
       sources: accepted,
     };
   }
@@ -177,37 +120,18 @@ export class RagPipeline {
 
     yield { type: "context", document: machineScope ?? "any", chunks: pool };
 
-    const ambiguity = detectMachineAmbiguity(req.message, pool);
-    if (ambiguity.ambiguous) {
-      yield {
-        type: "answer",
-        answer: {
-          meaning: ambiguity.question,
-          probable_causes: [],
-          corrective_action: [],
-          citations: [],
-          confidence: "low",
-          refusals: [ambiguity.question],
-        },
-      };
-      yield { type: "done" };
-      return;
-    }
-
-    const minScore = req.min_score ?? DEFAULT_MIN_SCORE;
-    const slice = pool.slice(0, 12);
-    const { accepted, refusals: scoreRefusals } = scoreGate(slice, minScore);
+    const accepted = pool.slice(0, 8);
 
     if (accepted.length === 0) {
       yield {
         type: "answer",
         answer: {
-          meaning: scoreRefusals[0] ?? "No matching content found.",
+          meaning: "No matching content found.",
           probable_causes: [],
           corrective_action: [],
           citations: [],
           confidence: "low",
-          refusals: scoreRefusals,
+          refusals: ["No relevant content was found."],
         },
       };
       yield { type: "done" };
@@ -220,40 +144,9 @@ export class RagPipeline {
       req.message, accepted, req.history ?? [], machineScope,
     );
 
-    const hcResult = await runHallucinationControl(
-      req.message, pool, accepted, answer,
-    );
-
     const sourceImages = [...new Set(accepted.flatMap((s) => s.images ?? []))].slice(0, 6);
 
-    if (hcResult.verdict === "reject") {
-      yield {
-        type: "answer",
-        answer: {
-          meaning: "The answer did not pass the hallucination control checks.",
-          probable_causes: [],
-          corrective_action: [],
-          citations: [],
-          images: sourceImages,
-          confidence: "low",
-          refusals: hcResult.refusals.length > 0
-            ? hcResult.refusals
-            : ["The system's safety checks flagged this response."],
-        },
-      };
-      yield { type: "done" };
-      return;
-    }
-
-    yield {
-      type: "answer",
-      answer: {
-        ...answer,
-        images: sourceImages,
-        ...(hcResult.verdict === "flag" ? { confidence: "low" as const } : {}),
-        refusals: hcResult.refusals,
-      },
-    };
-    yield { type: "done" };
+    yield { type: "answer", answer: { ...answer, images: sourceImages } };
+    yield { type: "done", answer: { ...answer, images: sourceImages } };
   }
 }

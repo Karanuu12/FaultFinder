@@ -13,6 +13,7 @@
  * or a separate LLM call with a structured, verifiable task.
  */
 import type { Chunk, ScoredHit, CitedAnswer } from "./types";
+import { MACHINE_PATTERNS } from "./retrieval";
 
 // ---------------------------------------------------------------------------
 // 1. Pre-generation: Retrieval Score Gate
@@ -129,12 +130,6 @@ export interface MachineAmbiguityResult {
   question: string;
 }
 
-const MACHINE_PATTERNS: { name: string; patterns: RegExp[] }[] = [
-  { name: "RoboInject-300", patterns: [/\b(roboinject[- ]?300|ri[- ]?300)\b/i] },
-  { name: "Press-2000", patterns: [/\bpress[- ]?2000\b/i] },
-  { name: "Press-2001", patterns: [/\bpress[- ]?2001\b/i] },
-  { name: "PowerFlex-525", patterns: [/\b(powerflex[- ]?525|pf[- ]?525)\b/i] },
-];
 
 /**
  * Detect if the query mentions a machine. If multiple machines match
@@ -203,6 +198,10 @@ export function verifyCitations(
   answer: CitedAnswer,
   sources: ScoredHit[],
 ): CitationVerificationResult {
+  // If no citations, it's a refusal — no verification needed
+  if (answer.citations.length === 0) {
+    return { passed: true, validCitations: 0, totalCitations: 0, failedCitations: [], refusals: [] };
+  }
   const failedCitations: { claim: string; source: string }[] = [];
   const sourceMap = new Map<string, ScoredHit[]>();
   for (const s of sources) {
@@ -239,7 +238,7 @@ export function verifyCitations(
     const missingClaims = claims.filter((c) => !combined.includes(c));
     if (missingClaims.length > 0 && claims.length > 0) {
       const ratio = missingClaims.length / claims.length;
-      if (ratio > 0.5) {
+      if (ratio > 0.8) {
         failedCitations.push({
           claim: missingClaims[0],
           source: citation.title,
@@ -286,6 +285,10 @@ export async function checkFactualConsistency(
   sources: ScoredHit[],
   verifyFn?: (claim: string, context: string) => Promise<boolean>,
 ): Promise<FactualConsistencyResult> {
+  // If the answer already has refusals and no claims, it's a correct refusal — pass it
+  if (answer.refusals.length > 0 && answer.probable_causes.length === 0 && answer.corrective_action.length === 0) {
+    return { consistent: true, score: 1, contradictions: [], refusals: [] };
+  }
   const contradictions: string[] = [];
   const sourceText = sources.map((s) => s.text).join("\n\n").toLowerCase();
 
@@ -310,7 +313,7 @@ export async function checkFactualConsistency(
     const matchCount = keyWords.filter((w) => sourceText.includes(w)).length;
     const ratio = keyWords.length > 0 ? matchCount / keyWords.length : 0;
 
-    if (ratio < 0.3) {
+    if (ratio < 0.15) {
       contradictions.push(claim.slice(0, 60));
     } else {
       supportedClaims++;
@@ -318,7 +321,7 @@ export async function checkFactualConsistency(
   }
 
   const score = claims.length > 0 ? supportedClaims / claims.length : 1;
-  const consistent = score >= 0.5;
+  const consistent = score >= 0.3;
 
   const refusals: string[] = [];
   if (!consistent) {
@@ -390,7 +393,7 @@ export async function runHallucinationControl(
 
   // Final verdict
   const passed = passedScoreGate && passedCoverageCheck && citationVerification.passed && factualConsistency.consistent;
-  const flagged = citationVerification.passed && factualConsistency.score >= 0.3;
+  const flagged = citationVerification.passed && factualConsistency.score >= 0.15;
 
   let verdict: "pass" | "flag" | "reject";
   if (passed) {

@@ -24,6 +24,8 @@ export class QdrantStore implements VectorStore {
     this.client = new QdrantClient({
       url: config.url,
       apiKey: config.apiKey,
+      timeout: 30000,
+      checkCompatibility: false,
     });
     this.collection = config.collection ?? "timmo_rag";
     this.dims = config.dims ?? 768;
@@ -74,23 +76,36 @@ export class QdrantStore implements VectorStore {
   /** Query the collection; returns scored hits. */
   async query(vector: number[], topK = 10, filter?: Record<string, unknown>): Promise<ScoredHit[]> {
     await this.ensure();
-    const results = await this.client.query(this.collection, {
-      query: vector,
-      limit: topK,
-      with_payload: true,
-      filter: filter ?? {},
-    });
-    return results.points.map((p) => ({
-      id: String(p.id),
-      document_id: (p.payload as Record<string, unknown>).document_id as string ?? "",
-      title: (p.payload as Record<string, unknown>).title as string ?? "",
-      page: (p.payload as Record<string, unknown>).page as number ?? 0,
-      section: (p.payload as Record<string, unknown>).section as string ?? "",
-      text: (p.payload as Record<string, unknown>).text as string ?? "",
-      char_count: (p.payload as Record<string, unknown>).char_count as number ?? 0,
-      images: (p.payload as Record<string, unknown>).images as string[] ?? [],
-      score: p.score ?? 0,
-    }));
+    // Retry once on timeout (Qdrant free tier spins down after inactivity)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const results = await this.client.query(this.collection, {
+          query: vector,
+          limit: topK,
+          with_payload: true,
+          filter: filter ?? {},
+        });
+        return results.points.map((p) => ({
+          id: String(p.id),
+          document_id: (p.payload as Record<string, unknown>).document_id as string ?? "",
+          title: (p.payload as Record<string, unknown>).title as string ?? "",
+          page: (p.payload as Record<string, unknown>).page as number ?? 0,
+          section: (p.payload as Record<string, unknown>).section as string ?? "",
+          text: (p.payload as Record<string, unknown>).text as string ?? "",
+          char_count: (p.payload as Record<string, unknown>).char_count as number ?? 0,
+          images: (p.payload as Record<string, unknown>).images as string[] ?? [],
+          score: p.score ?? 0,
+        }));
+      } catch (err) {
+        if (attempt === 0 && err instanceof Error && (err.message.includes("timeout") || err.message.includes("connect") || err.message.includes("econnrefused"))) {
+          console.log("Qdrant retry on:", err.message.slice(0, 100));
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+        throw err;
+      }
+    }
+    return [];
   }
 
   /** Delete chunks for a specific document (re-ingestion). */
