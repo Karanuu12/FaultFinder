@@ -747,8 +747,8 @@ export const Hero = () => {
 
         <div className="mx-auto flex w-full max-w-7xl flex-col items-center text-center">
           <div className="pt-12 sm:pt-[15vh]">
-            <h1 className="mx-auto max-w-[22rem] text-[2.2rem] leading-[1.04] tracking-[-0.01em] text-black/90 sm:max-w-3xl sm:text-5xl sm:leading-[0.92] sm:tracking-[-0.02em] md:text-7xl font-bold">
-              Turn a cryptic error code into a fix — in seconds.
+            <h1 className="mx-auto max-w-[22rem] text-[2.2rem] leading-[1.04] tracking-[-0.01em] text-black/90 sm:max-w-4xl sm:text-5xl sm:leading-[0.92] sm:tracking-[-0.02em] md:text-7xl font-bold">
+              Turn a cryptic error code into a fix. in seconds.
             </h1>
             <p className="mx-auto mt-4 max-w-[21rem] text-[13px] leading-6 text-black/80 sm:mt-6 sm:max-w-xl sm:text-base sm:leading-7 lg:text-lg">
               Type an error code, a symptom, or a machine name. FaultFinder
