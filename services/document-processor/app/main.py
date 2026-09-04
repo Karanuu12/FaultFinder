@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import anyio
 
 from .chunking import chunk_pages
 from .pdf import extract_pdf_pages
@@ -36,6 +37,7 @@ class Page(BaseModel):
     page: int = Field(ge=1)
     section: str = ""
     text: str = ""
+    images: list[str] = Field(default_factory=list)
 
 
 class ParseResponse(BaseModel):
@@ -61,6 +63,7 @@ class Chunk(BaseModel):
     section: str
     text: str
     char_count: int = 0
+    images: list[str] = Field(default_factory=list)
 
 
 class ChunkResponse(BaseModel):
@@ -108,9 +111,10 @@ async def parse_pdf(file: UploadFile = File(...), document_id: str = Form(...)) 
 
 
 @app.post("/chunk", response_model=ChunkResponse)
-def chunk(request: ChunkRequest) -> ChunkResponse:
+async def chunk(request: ChunkRequest) -> ChunkResponse:
     """Split a parsed document into semantic, heading-aware chunks."""
-    return ChunkResponse(chunks=chunk_pages(request, max_chars=request.max_chars, overlap=request.overlap))
+    with anyio.fail_after(15):
+        return ChunkResponse(chunks=chunk_pages(request, max_chars=request.max_chars, overlap=request.overlap))
 
 
 @app.post("/process", response_model=ChunkResponse)
@@ -146,7 +150,8 @@ async def process_pdf(
         max_chars=max_chars,
         overlap=overlap,
     )
-    return ChunkResponse(chunks=chunk_pages(req, max_chars=max_chars, overlap=overlap))
+    with anyio.fail_after(15):
+        return ChunkResponse(chunks=chunk_pages(req, max_chars=max_chars, overlap=overlap))
 
 
 def build_app() -> FastAPI:

@@ -1,6 +1,8 @@
-"""PDF → text + page/section metadata extraction."""
+"""PDF → text + page/section metadata + embedded image extraction."""
 from __future__ import annotations
 
+import io
+from pathlib import Path
 from typing import Any
 
 try:  # PyMuPDF: best structural fidelity (tables, glyphs)
@@ -20,11 +22,13 @@ except Exception:  # pragma: no cover
     PdfReader = None  # type: ignore[assignment]
 
 
-def extract_pdf_pages(raw: bytes) -> list[dict[str, Any]]:
-    """Return a list of {page, section, text} for a raw PDF byte buffer.
+MAX_IMAGE_SIZE = 500 * 1024  # 500 KB per image
 
-    Prefers PyMuPDF for structural extraction and falls back to pypdf.
-    Either backend fails, an exception propagates to the caller (HTTP 422).
+
+def extract_pdf_pages(raw: bytes) -> list[dict[str, Any]]:
+    """Return a list of {page, section, text, images} for a raw PDF byte buffer.
+
+    `images` is a list of base64-encoded JPEG/PNG thumbnails extracted from the page.
     """
     if _MUPDF and pymupdf is not None:
         return _extract_mupdf(raw)
@@ -38,22 +42,66 @@ def _extract_mupdf(raw: bytes) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     for idx, page in enumerate(doc, start=1):
         text = page.get_text("text", sort=True).strip()
-        if not text:
-            continue
-        pages.append({"page": idx, "section": _detect_section(text), "text": text})
+        images = _extract_images(page, page_number=idx)
+        pages.append({
+            "page": idx,
+            "section": _detect_section(text),
+            "text": text,
+            "images": images,
+        })
     return pages
 
 
-def _extract_pypdf(raw: bytes) -> list[dict[str, Any]]:
-    import io
+def _extract_images(page: pymupdf.Page, page_number: int) -> list[str]:
+    """Extract embedded images from a page as base64 JPEG thumbnails.
 
+    Returns up to 3 largest images per page, each ≤ MAX_IMAGE_SIZE.
+    """
+    import base64
+
+    image_list = page.get_images()
+    extracted: list[tuple[int, bytes]] = []
+
+    for img_index, img_info in enumerate(image_list):
+        xref = img_info[0]
+        pix = pymupdf.Pixmap(doc=page.parent, xref=xref)  # type: ignore[attr-defined]
+        try:
+            # Skip large or tiny images
+            if pix.width < 50 or pix.height < 50:
+                continue
+            if pix.width > 2000 or pix.height > 2000:
+                continue
+
+            # Convert to JPEG bytes
+            pix = pymupdf.Pixmap(pix, 0)  # remove alpha if present  # type: ignore[attr-defined]
+            img_bytes = pix.tobytes("jpeg", jpg_quality=70)
+            if len(img_bytes) > MAX_IMAGE_SIZE:
+                continue
+
+            extracted.append((pix.width * pix.height, img_bytes))
+        except Exception:
+            continue
+
+    # Keep up to 3 largest images
+    extracted.sort(key=lambda x: -x[0])
+    result: list[str] = []
+    for _, img_bytes in extracted[:3]:
+        b64 = base64.b64encode(img_bytes).decode("ascii")
+        result.append(f"data:image/jpeg;base64,{b64}")
+    return result
+
+
+def _extract_pypdf(raw: bytes) -> list[dict[str, Any]]:
     reader = PdfReader(io.BytesIO(raw))  # type: ignore[attr-defined]
     pages: list[dict[str, Any]] = []
     for idx, page in enumerate(reader.pages, start=1):
         text = (page.extract_text() or "").strip()
-        if not text:
-            continue
-        pages.append({"page": idx, "section": _detect_section(text), "text": text})
+        pages.append({
+            "page": idx,
+            "section": _detect_section(text),
+            "text": text,
+            "images": [],  # pypdf doesn't support image extraction easily
+        })
     return pages
 
 
