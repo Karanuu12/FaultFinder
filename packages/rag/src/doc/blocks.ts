@@ -79,11 +79,56 @@ function outlinePathFor(outline: OutlineInput[] | undefined, page: number): stri
   return stack.filter(Boolean);
 }
 
+/**
+ * Running headers/footers ("© Copyright 2004-2019 ABB. All rights reserved.",
+ * "3HAC033453-001 Revision: AL") repeat on nearly every page. Measured on real
+ * manuals they are 4-7% of ALL extracted text, which is 4-7% of the embedding
+ * bill, and they pollute every chunk they land in with boilerplate that
+ * competes with real content during retrieval.
+ *
+ * Detected by frequency rather than position: a normalized line (digits masked,
+ * so page numbers and revision numbers collapse together) appearing on more
+ * than `threshold` of pages is furniture. Only runs on documents long enough
+ * for the signal to mean something -- on a 3-page manual a line appearing
+ * twice is not boilerplate.
+ */
+function detectFurniture(pages: PageInput[], threshold = 0.6): Set<string> {
+  const furniture = new Set<string>();
+  if (pages.length < 8) return furniture;
+
+  const counts = new Map<string, number>();
+  for (const p of pages) {
+    // Count each distinct line once per page; a line repeated within one page
+    // is a formatting artifact, not evidence of being a running header.
+    const seen = new Set<string>();
+    for (const raw of (p.text ?? "").split("\n")) {
+      const line = raw.trim();
+      if (!line || line.length > 100) continue;
+      const norm = normalizeFurniture(line);
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      counts.set(norm, (counts.get(norm) ?? 0) + 1);
+    }
+  }
+
+  const min = Math.ceil(pages.length * threshold);
+  for (const [norm, n] of counts) {
+    if (n >= min) furniture.add(norm);
+  }
+  return furniture;
+}
+
+/** Digits masked so "Page 12" and "Page 13" collapse to the same line. */
+function normalizeFurniture(line: string): string {
+  return line.replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
+}
+
 export function buildBlocks(pages: PageInput[], opts: BlockBuildOptions): Block[] {
   const blocks: Block[] = [];
   let seq = 0;
   // Section path derived from in-page headings, used when there's no outline.
   let headingPath: string[] = [];
+  const furniture = detectFurniture(pages);
 
   const push = (
     kind: BlockKind,
@@ -167,6 +212,9 @@ export function buildBlocks(pages: PageInput[], opts: BlockBuildOptions): Block[
         flushParagraph();
         continue;
       }
+
+      // Running header/footer -- drop before it reaches any block.
+      if (furniture.size && furniture.has(normalizeFurniture(trimmed))) continue;
 
       // Record figure/diagram captions as we pass them, but don't consume the
       // line — it still flows into paragraph/heading handling below like any

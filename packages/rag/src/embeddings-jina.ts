@@ -92,7 +92,7 @@ export interface JinaConfig {
   batchSize?: number;
   /** Batches in flight at once. Independent HTTP calls, not related to dims/model. */
   concurrency?: number;
-  /** Free-tier default is 100k; kept below that so this client backs off before Jina 429s it. */
+  /** Free-tier limit is 100k/min; 95k keeps a safety margin while wasting less of the budget than 85k did. */
   tokensPerMinute?: number;
   baseUrl?: string;
 }
@@ -116,7 +116,7 @@ export class JinaEmbeddingClient {
     this.batchSize = config.batchSize ?? 64;
     this.concurrency = config.concurrency ?? 4;
     this.baseUrl = config.baseUrl ?? JINA_URL;
-    this.limiter = limiterFor(config.tokensPerMinute ?? 85_000);
+    this.limiter = limiterFor(config.tokensPerMinute ?? 95_000);
   }
 
   get dims(): number {

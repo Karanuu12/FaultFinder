@@ -18,6 +18,7 @@
  * fused with Reciprocal Rank Fusion so no signal can stomp the others.
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { writeFile, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Chunk, FaultRecord } from "../doc/model.ts";
 import { normalizeCode } from "../doc/model.ts";
@@ -79,6 +80,9 @@ export class LocalStore {
   private vectors: number[][] = [];
   private faults: FaultRecord[] = [];
 
+  private saving = false;
+  private pendingSave = false;
+
   /** codeNorm → chunk indices, for exact lookup that never depends on vector luck. */
   private codeIndex = new Map<string, Set<number>>();
   /** token → chunk indices. */
@@ -108,7 +112,46 @@ export class LocalStore {
     }
   }
 
+  /**
+   * Serializing + writing the index is ~0.8s at 46MB, and writeFileSync
+   * blocks Node's event loop for all of it -- which stalls every concurrent
+   * chat query while an ingest is saving. Written async, via temp+rename so a
+   * crash mid-write can't truncate the index, and coalesced so a burst of
+   * saves does one write instead of N.
+   */
   save(): void {
+    this.pendingSave = true;
+    if (this.saving) return;
+    void this.flush();
+  }
+
+  private async flush(): Promise<void> {
+    this.saving = true;
+    try {
+      while (this.pendingSave) {
+        this.pendingSave = false;
+        const payload: Persisted = {
+          version: 2,
+          documents: this.documents,
+          chunks: this.chunks,
+          vectors: this.vectors,
+          faults: this.faults,
+        };
+        const json = JSON.stringify(payload);
+        mkdirSync(dirname(this.path), { recursive: true });
+        const tmp = `${this.path}.tmp`;
+        await writeFile(tmp, json);
+        await rename(tmp, this.path);
+      }
+    } catch (err) {
+      console.error("[store] save failed:", String(err).slice(0, 200));
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  /** Synchronous save, for paths that must not return before it's durable. */
+  saveSync(): void {
     mkdirSync(dirname(this.path), { recursive: true });
     const payload: Persisted = {
       version: 2,
@@ -118,6 +161,7 @@ export class LocalStore {
       faults: this.faults,
     };
     writeFileSync(this.path, JSON.stringify(payload));
+    this.pendingSave = false;
   }
 
   private rebuildIndexes(): void {

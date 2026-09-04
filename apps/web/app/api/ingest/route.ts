@@ -18,6 +18,8 @@ import { extractFaultRecords } from "@timmo/rag/doc/faults";
 import type { PageInput, OutlineInput } from "@timmo/rag/doc/blocks";
 import { getStore, getEmbedder } from "@/lib/rag-index";
 import { setProgress } from "@/lib/ingest-progress";
+import { getEmbedCache } from "@/lib/rag-index";
+import { embedWithCache } from "@timmo/rag/store/embed-cache";
 
 export const runtime = "nodejs";
 // A 170-page manual takes minutes to parse + embed; don't let the platform cut it off.
@@ -120,6 +122,28 @@ export async function POST(request: NextRequest) {
     const jobId = (form.get("job_id") as string) || "";
     jobIdForError = jobId;
 
+    // Idempotency: the exact same file, already indexed, is a no-op.
+    // Re-uploading a manual to retry something used to redo minutes of work.
+    const existing = getStore().listDocuments().find((d) => d.sha256 === sha256);
+    if (existing) {
+      setProgress(jobId, "done", 100, "Already indexed");
+      return Response.json({
+        document_id: existing.documentId,
+        title: existing.title,
+        machine_id: existing.machineId,
+        model: existing.model,
+        pages: existing.pageCount,
+        chunks: existing.chunkCount,
+        faults: existing.faultCount,
+        fault_codes: [],
+        dims: 0,
+        low_text_pages: [],
+        unchanged: true,
+        elapsed_ms: Date.now() - started,
+        indexed_at: existing.indexedAt,
+      });
+    }
+
     // 1. Parse
     setProgress(jobId, "parsing", 5, "Extracting text and diagrams…");
     const { title, pages, outline } = await parseDocument(file, documentId);
@@ -158,8 +182,13 @@ export async function POST(request: NextRequest) {
     // 4. Embed (batched — one request per 64 chunks, not one per chunk)
     const embedder = getEmbedder();
     setProgress(jobId, "embedding", 25, `0/${chunks.length} chunks embedded`);
-    const vectors = await embedder.embedMany(
+    // Cache + duplicate collapsing before anything hits the API. Embedding is
+    // ~90-95% of ingest wall time and is rate-limited per minute, so the only
+    // real lever is embedding fewer tokens. Both savings are lossless.
+    const { vectors, cacheHits, embedded } = await embedWithCache(
       chunks.map((c) => c.text),
+      getEmbedCache(embedder.dims),
+      (inputs, onProgress) => embedder.embedMany(inputs, onProgress),
       // Real progress across the slowest phase by far -- 25% to 90%.
       (done, total) =>
         setProgress(jobId, "embedding", 25 + (done / total) * 65, `${done}/${total} chunks embedded`),
@@ -197,6 +226,8 @@ export async function POST(request: NextRequest) {
       faults: faults.length,
       fault_codes: [...new Set(faults.map((f) => f.codeRaw))].slice(0, 40),
       dims: vectors[0]?.length ?? 0,
+      cache_hits: cacheHits,
+      embedded_chunks: embedded,
       // Pages with near-zero extractable text -- likely scanned/image-only.
       // No OCR pipeline yet, so content on these pages was not indexed.
       low_text_pages: lowTextPages,

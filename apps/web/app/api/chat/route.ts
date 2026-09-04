@@ -157,6 +157,86 @@ function sanitizeHistory(raw: unknown): HistoryTurn[] {
   return out;
 }
 
+/**
+ * Query-vector LRU. The Jina embedQuery round-trip is 0.46-0.56s measured --
+ * about 60% of total query latency -- and a technician re-asking or refining
+ * the same phrasing pays it again every time. Bounded so a long-running
+ * process can't grow it without limit.
+ */
+const QUERY_VEC_CACHE = new Map<string, number[]>();
+const QUERY_VEC_CACHE_MAX = 500;
+
+function cachedQueryVector(key: string): number[] | undefined {
+  const hit = QUERY_VEC_CACHE.get(key);
+  if (hit) {
+    // Refresh recency: delete + re-set moves it to the end of insertion order.
+    QUERY_VEC_CACHE.delete(key);
+    QUERY_VEC_CACHE.set(key, hit);
+  }
+  return hit;
+}
+
+function putQueryVector(key: string, vector: number[]): void {
+  if (QUERY_VEC_CACHE.size >= QUERY_VEC_CACHE_MAX) {
+    const oldest = QUERY_VEC_CACHE.keys().next().value;
+    if (oldest !== undefined) QUERY_VEC_CACHE.delete(oldest);
+  }
+  QUERY_VEC_CACHE.set(key, vector);
+}
+
+/**
+ * Exact fault-code lookup, answered straight from the fault index -- no
+ * embedding call, no LLM call.
+ *
+ * A FaultRecord already holds exactly what the answer format needs (meaning,
+ * causes, corrective steps, provenance), extracted deterministically at
+ * ingest. Sending that to an LLM to be re-worded costs ~0.5s of embedding
+ * plus a generation round-trip and can only make it LESS faithful. Answer
+ * directly when the record is complete; fall through to the normal pipeline
+ * when it isn't.
+ */
+function answerFromFaultRecord(record: FaultRecord) {
+  return {
+    error_code: record.codeRaw,
+    meaning: record.meaning,
+    probable_causes: record.causes,
+    corrective_action: record.steps.map((s) => ({ step: s.n, action: s.text })),
+    citations: [
+      {
+        document_id: record.provenance.documentId,
+        title: record.provenance.title,
+        page: Number(record.provenance.pageLabel) || record.provenance.pagePdf,
+        section: record.provenance.sectionPath.join(" › "),
+      },
+    ],
+    images: [] as string[],
+    confidence: "high" as const,
+    refusals: [] as string[],
+  };
+}
+
+/**
+ * Is this record clean enough to serve verbatim, skipping the LLM?
+ *
+ * Only table-extracted records qualify. A fault TABLE has real column
+ * separation, so `meaning`/`causes`/`steps` land in the right fields --
+ * that's the case the extractor's tests cover. Section-extracted records come
+ * from prose and can be mushy: one measured record put all five probable
+ * causes into `steps` and split the real corrective actions mid-sentence.
+ * Serving that directly would be faster AND worse, so those fall through to
+ * the normal retrieval+LLM path, which re-reads the underlying chunks and
+ * recovers. Speed is only worth taking when it costs nothing.
+ */
+function isFastPathQuality(record: FaultRecord): boolean {
+  if (record.extraction !== "table_row") return false;
+  if (!record.meaning?.trim()) return false;
+  if (record.steps.length === 0) return false;
+  // A table cell that exploded into dozens of "steps" is a parse artifact,
+  // not a 30-step procedure.
+  if (record.steps.length > 12) return false;
+  return true;
+}
+
 /** Phase 9: the same code meaning different things on different machines. */
 function checkAmbiguity(records: FaultRecord[]): { ambiguous: boolean; question: string } {
   const byMachine = new Map<string, FaultRecord>();
@@ -243,6 +323,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // --- Exact fault-code fast path ---------------------------------------
+    // A complete FaultRecord for a resolved machine already IS the answer, in
+    // the exact shape the response format needs, extracted deterministically
+    // at ingest. Skipping embedding + generation here turns a ~700ms query
+    // into a few milliseconds with strictly higher fidelity -- the LLM can
+    // only paraphrase what's already exact. Only taken when the record is
+    // complete (has meaning AND steps); anything thinner falls through to the
+    // full pipeline so we never trade an answer for speed.
+    if (messageCodes.length === 1 && !history.length) {
+      const candidatesForCode = store.faultsForCode(messageCodes[0]);
+      const scoped = resolvedMachine
+        ? candidatesForCode.filter((r) => r.machineId === resolvedMachine)
+        : candidatesForCode;
+      const record = scoped.length === 1 ? scoped[0] : undefined;
+      if (record && isFastPathQuality(record)) {
+        return Response.json({
+          answer: answerFromFaultRecord(record),
+          sources: [],
+          resolved_machine: record.machineId,
+          fast_path: "fault-index",
+        });
+      }
+    }
+
     // --- Retrieval ----------------------------------------------------------
     // A vague follow-up ("and what if that doesn't fix it?") carries no
     // retrievable terms on its own. Augmenting the SEARCH text (not the
@@ -253,7 +357,12 @@ export async function POST(request: NextRequest) {
     const retrievalQuery = [carriedCode, machineLabel, message].filter(Boolean).join(" ");
 
     const embedder = getEmbedder();
-    const queryVector = await embedder.embedQuery(retrievalQuery);
+    // ~0.5s of the ~0.8s query is this one round-trip; cache it.
+    let queryVector = cachedQueryVector(retrievalQuery);
+    if (!queryVector) {
+      queryVector = await embedder.embedQuery(retrievalQuery);
+      putQueryVector(retrievalQuery, queryVector);
+    }
     const hits = store.search(queryVector, retrievalQuery, { topK: 8, machineId: resolvedMachine });
 
     if (hits.length === 0) {

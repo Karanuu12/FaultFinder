@@ -8,6 +8,7 @@
  */
 import { LocalStore } from "@timmo/rag/store/local-store";
 import { JinaEmbeddingClient } from "@timmo/rag/embeddings-jina";
+import { EmbedCache } from "@timmo/rag/store/embed-cache";
 import path from "node:path";
 
 const INDEX_PATH = path.resolve(process.cwd(), "../../.data/index.json");
@@ -32,6 +33,30 @@ export function getEmbedder(): JinaEmbeddingClient {
     );
   }
   return new JinaEmbeddingClient({ apiKey });
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __faultfinderEmbedCache: EmbedCache | undefined;
+}
+
+/**
+ * Singleton so the cache is loaded from disk once per process, not per
+ * request. Keyed by model+dims inside the cache itself, so it can never
+ * serve vectors from a different embedding space.
+ */
+export function getEmbedCache(dims: number): EmbedCache {
+  if (!globalThis.__faultfinderEmbedCache) {
+    const model = (process.env.EMBEDDINGS_PROVIDER ?? "").toLowerCase() === "local"
+      ? "local"
+      : "jina-embeddings-v3";
+    globalThis.__faultfinderEmbedCache = new EmbedCache(
+      path.resolve(process.cwd(), "../../.data/embed-cache.json"),
+      model,
+      dims,
+    );
+  }
+  return globalThis.__faultfinderEmbedCache;
 }
 
 export { INDEX_PATH };
