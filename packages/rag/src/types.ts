@@ -5,6 +5,7 @@ export interface SourcePage {
   page: number;
   section: string;
   text: string;
+  images: string[];
 }
 
 /** A chunk with its provenance metadata (used by indexing + retrieval). */
@@ -16,6 +17,7 @@ export interface Chunk {
   section: string;
   text: string;
   char_count: number;
+  images?: string[];
 }
 
 /** A retrieval hit (chunk + similarity score). */
@@ -44,6 +46,7 @@ export interface CitedAnswer {
   probable_causes: string[];
   corrective_action: AnswerStep[];
   citations: Citation[];
+  images?: string[];
   confidence: "high" | "medium" | "low";
   refusals: string[];
   raw?: string;

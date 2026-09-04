@@ -26,10 +26,10 @@ export class QdrantStore implements VectorStore {
       apiKey: config.apiKey,
     });
     this.collection = config.collection ?? "timmo_rag";
-    this.dims = config.dims ?? 768;
+    this.dims = config.dims ?? 3072;
   }
 
-  /** Ensure collection exists (lazy). */
+  /** Ensure collection exists (lazy) + ensure keyword index on document_id. */
   async ensure(): Promise<void> {
     if (this.ready) return;
     const exists = await this.client.collectionExists(this.collection);
@@ -38,6 +38,13 @@ export class QdrantStore implements VectorStore {
         vectors: { size: this.dims, distance: "Cosine" },
       });
     }
+    // Create keyword index on document_id for filtering (idempotent)
+    try {
+      await this.client.createPayloadIndex(this.collection, {
+        field_name: "document_id",
+        field_schema: "keyword" as any,
+      });
+    } catch { /* already exists — fine */ }
     this.ready = true;
   }
 
@@ -55,6 +62,7 @@ export class QdrantStore implements VectorStore {
         section: c.section,
         text: c.text,
         char_count: c.char_count,
+        images: c.images ?? [],
       },
     }));
     await this.client.upsert(this.collection, {
@@ -80,6 +88,7 @@ export class QdrantStore implements VectorStore {
       section: (p.payload as Record<string, unknown>).section as string ?? "",
       text: (p.payload as Record<string, unknown>).text as string ?? "",
       char_count: (p.payload as Record<string, unknown>).char_count as number ?? 0,
+      images: (p.payload as Record<string, unknown>).images as string[] ?? [],
       score: p.score ?? 0,
     }));
   }

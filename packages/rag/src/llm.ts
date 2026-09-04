@@ -14,13 +14,26 @@ export interface LLMConfig {
 const GROQ_BASE = "https://api.groq.com/openai/v1";
 
 const STRUCTURED_ANSWER_SCHEMA = z.object({
-  error_code: z.string().optional(),
-  meaning: z.string(),
-  probable_causes: z.array(z.string()),
-  corrective_action: z.array(z.object({ step: z.number(), action: z.string() })),
-  citations: z.array(z.object({ document_id: z.string(), title: z.string(), page: z.number(), section: z.string() })),
-  confidence: z.enum(["high", "medium", "low"]),
-  refusals: z.array(z.string()),
+  error_code: z.string().optional().default(""),
+  meaning: z.string().optional().default(""),
+  probable_causes: z.array(z.string()).optional().default([]),
+  corrective_action: z
+    .array(z.object({ step: z.number(), action: z.string() }))
+    .optional()
+    .default([]),
+  citations: z
+    .array(
+      z.object({
+        document_id: z.string(),
+        title: z.string(),
+        page: z.number(),
+        section: z.string(),
+      }),
+    )
+    .optional()
+    .default([]),
+  confidence: z.enum(["high", "medium", "low"]).optional().default("low"),
+  refusals: z.array(z.string()).optional().default([]),
 });
 
 export class GroqClient {
@@ -112,7 +125,9 @@ export class GroqClient {
 
     const content = choice.message.content;
     const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-    const parsed = STRUCTURED_ANSWER_SCHEMA.parse(JSON.parse(cleaned));
+    const parsed = STRUCTURED_ANSWER_SCHEMA.parse(
+      JSON.parse(cleaned, (_key, value) => (value === null ? undefined : value)),
+    );
 
     return {
       ...parsed,
