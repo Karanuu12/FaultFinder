@@ -21,8 +21,12 @@ export class OllamaEmbeddingClient {
     this.model = config.model ?? "nomic-embed-text";
   }
 
+  get dims(): number {
+    return 768;
+  }
+
   /** Embed all inputs, returns one vector per input in order. */
-  async embed(inputs: string[]): Promise<number[][]> {
+  async embed(inputs: string[], onProgress?: (done: number, total: number) => void): Promise<number[][]> {
     if (!inputs?.length) return [];
     const vectors: number[][] = [];
     for (let i = 0; i < inputs.length; i += BATCH_SIZE) {
@@ -33,7 +37,7 @@ export class OllamaEmbeddingClient {
     return vectors;
   }
 
-  embedMany(inputs: string[]): Promise<number[][]> {
+  embedMany(inputs: string[], onProgress?: (done: number, total: number) => void): Promise<number[][]> {
     return this.embed(inputs);
   }
 

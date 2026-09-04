@@ -8,13 +8,13 @@
  */
 import { LocalStore } from "@timmo/rag/store/local-store";
 import { JinaEmbeddingClient } from "@timmo/rag/embeddings-jina";
+import { OllamaEmbeddingClient } from "@timmo/rag/embeddings";
 import { EmbedCache } from "@timmo/rag/store/embed-cache";
 import path from "node:path";
 
 const INDEX_PATH = path.resolve(process.cwd(), "../../.data/index.json");
 
 declare global {
-  // eslint-disable-next-line no-var
   var __faultfinderStore: LocalStore | undefined;
 }
 
@@ -25,14 +25,13 @@ export function getStore(): LocalStore {
   return globalThis.__faultfinderStore;
 }
 
-export function getEmbedder(): JinaEmbeddingClient {
+export function getEmbedder(): JinaEmbeddingClient | OllamaEmbeddingClient {
   const apiKey = process.env.JINA_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "JINA_API_KEY is not set. Add it to apps/web/.env.local and restart the dev server.",
-    );
+  if (apiKey) {
+    return new JinaEmbeddingClient({ apiKey });
   }
-  return new JinaEmbeddingClient({ apiKey });
+  console.log("JINA_API_KEY not set, using local Ollama embeddings");
+  return new OllamaEmbeddingClient();
 }
 
 declare global {
