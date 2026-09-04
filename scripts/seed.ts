@@ -14,7 +14,7 @@ dotenv.config({ path: resolve(__dirname, "../apps/web/.env.local") });
 
 import fs from "fs";
 import path from "path";
-import { GeminiEmbeddingClient, QdrantStore, MemoryVectorStore } from "@timmo/rag";
+import { OllamaEmbeddingClient, QdrantStore, MemoryVectorStore } from "@timmo/rag";
 import pdfParse from "pdf-parse";
 import crypto from "crypto";
 
@@ -39,15 +39,13 @@ async function main() {
     process.exit(1);
   }
 
-  const embedder = new GeminiEmbeddingClient({
-    apiKey: process.env.GEMINI_API_KEY ?? "",
-  });
+  const embedder = new OllamaEmbeddingClient();
 
   const vectorStore = process.env.QDRANT_CLUSTER_ENDPOINT ?? process.env.QDRANT_URL
     ? new QdrantStore({
         url: process.env.QDRANT_CLUSTER_ENDPOINT ?? process.env.QDRANT_URL ?? "",
         apiKey: process.env.QDRANT_API_KEY,
-        dims: 3072,
+        dims: 768,
       })
     : new MemoryVectorStore();
 

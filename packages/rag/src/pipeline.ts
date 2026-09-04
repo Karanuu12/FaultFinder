@@ -6,7 +6,7 @@ import type {
   StreamEvent,
   VectorStore,
 } from "./types";
-import { GeminiEmbeddingClient } from "./embeddings";
+import { OllamaEmbeddingClient } from "./embeddings";
 import {
   expandQuery,
   gateByScore,
@@ -18,13 +18,13 @@ import {
 import type { GroqClient } from "./llm";
 
 export interface PipelineConfig {
-  embedder: GeminiEmbeddingClient;
+  embedder: OllamaEmbeddingClient;
   vectorStore: VectorStore;
   llm: GroqClient;
 }
 
 export class RagPipeline {
-  private embedder: GeminiEmbeddingClient;
+  private embedder: OllamaEmbeddingClient;
   private vectorStore: VectorStore;
   private llm: GroqClient;
 

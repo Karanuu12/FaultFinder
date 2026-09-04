@@ -7,7 +7,7 @@ export function makeVectorStore(): VectorStore {
 
   if (url) {
     console.log("Using Qdrant vector store at", url);
-    return new QdrantStore({ url, apiKey, dims: 3072 });
+    return new QdrantStore({ url, apiKey, dims: 768 });
   }
 
   console.log("Using in-memory vector store (no QDRANT_URL/QDRANT_CLUSTER_ENDPOINT set)");

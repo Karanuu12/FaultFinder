@@ -26,7 +26,7 @@ export class QdrantStore implements VectorStore {
       apiKey: config.apiKey,
     });
     this.collection = config.collection ?? "timmo_rag";
-    this.dims = config.dims ?? 3072;
+    this.dims = config.dims ?? 768;
   }
 
   /** Ensure collection exists (lazy) + ensure keyword index on document_id. */

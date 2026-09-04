@@ -1,8 +1,5 @@
 import { NextRequest } from "next/server";
-import {
-  GeminiEmbeddingClient,
-  RagPipeline,
-} from "@timmo/rag";
+import { OllamaEmbeddingClient, RagPipeline } from "@timmo/rag";
 import { makeVectorStore } from "@/lib/rag-store";
 import { makeLLM } from "@/lib/rag-llm";
 
@@ -18,9 +15,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const embedder = new GeminiEmbeddingClient({
-      apiKey: process.env.GEMINI_API_KEY ?? "",
-    });
+    const embedder = new OllamaEmbeddingClient();
 
     const llm = makeLLM();
     const vectorStore = makeVectorStore();

@@ -3,7 +3,7 @@
  * Tries Python doc-processor (FastAPI) first, falls back to Node pdf-parse.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { GeminiEmbeddingClient, RagPipeline, MemoryVectorStore } from "@timmo/rag";
+import { OllamaEmbeddingClient, RagPipeline, MemoryVectorStore } from "@timmo/rag";
 import { makeVectorStore } from "@/lib/rag-store";
 import { makeLLM } from "@/lib/rag-llm";
 
@@ -34,9 +34,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Embed + index
-    const embedder = new GeminiEmbeddingClient({
-      apiKey: process.env.GEMINI_API_KEY ?? "",
-    });
+    const embedder = new OllamaEmbeddingClient();
     const vectorStore = makeVectorStore();
     const llm = makeLLM();
     const pipeline = new RagPipeline({ embedder, vectorStore, llm });
