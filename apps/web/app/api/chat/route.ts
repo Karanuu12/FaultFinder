@@ -13,6 +13,7 @@
  */
 import { NextRequest } from "next/server";
 import { getStore, getEmbedder } from "@/lib/rag-index";
+import { getHallucinationSkill } from "@/lib/prompts/skill";
 import type { ScoredChunk } from "@timmo/rag/store/local-store";
 import type { FaultRecord } from "@timmo/rag/doc/model";
 
@@ -158,8 +159,18 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** No LLM key: return the evidence itself, correctly cited. Honest, not clever. */
-function answerFromRetrieval(hits: ScoredChunk[]) {
+/**
+ * Fallback answer built from retrieval alone, no LLM phrasing. Used both when
+ * there's no GROQ_API_KEY at all, and as answerWithGroq's own fallback when
+ * the call fails or its response doesn't parse -- those are different
+ * situations and get different refusal text. A refusal that misdiagnoses its
+ * own cause is a small credibility problem in exactly the area this file's
+ * skill prompt is trying to protect.
+ */
+function answerFromRetrieval(
+  hits: ScoredChunk[],
+  reason = "GROQ_API_KEY is not set, so this is the retrieved manual text rather than a generated answer.",
+) {
   const best = hits[0];
   const body = best.text.split("\n\n").slice(1).join("\n\n").trim() || best.text;
   const cited = hits.slice(0, 4);
@@ -170,9 +181,7 @@ function answerFromRetrieval(hits: ScoredChunk[]) {
     citations: cited.map(citationFor),
     images: imagesFor(cited),
     confidence: "medium" as const,
-    refusals: [
-      "GROQ_API_KEY is not set, so this is the retrieved manual text rather than a generated answer.",
-    ],
+    refusals: [reason],
   };
 }
 
@@ -192,16 +201,7 @@ async function answerWithGroq(message: string, hits: ScoredChunk[], apiKey: stri
       messages: [
         {
           role: "system",
-          content:
-            "You answer machine-troubleshooting questions strictly from the supplied manual excerpts. " +
-            "Tag every claim with the source it came from, e.g. [S2]. If the excerpts do not answer " +
-            "the question, say so in refusals rather than guessing. Some sources are figures or " +
-            "diagrams, marked with a leading [Figure] line — include one of those in used_sources " +
-            "whenever it is the diagram, drawing, wiring layout, or dimension illustration the question " +
-            "is actually asking about, not just because it appeared in the context. The actual image is " +
-            "rendered separately below your answer whenever you cite a [Figure] source — never say the " +
-            "drawing 'cannot be shown' or that you lack the actual image; instead describe what it shows " +
-            "and let the rendered figure speak for itself. Output JSON only.",
+          content: getHallucinationSkill(),
         },
         {
           role: "user",
@@ -218,14 +218,22 @@ async function answerWithGroq(message: string, hits: ScoredChunk[], apiKey: stri
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     console.warn("Groq failed, falling back to retrieval:", detail.slice(0, 200));
-    return answerFromRetrieval(hits);
+    return answerFromRetrieval(
+      hits,
+      `The answer-generation model returned an error (${res.status}), so this is the retrieved manual text rather than a generated answer.`,
+    );
   }
 
   const raw = await res.json();
   const content: string = raw.choices?.[0]?.message?.content ?? "";
   const start = content.indexOf("{");
   const end = content.lastIndexOf("}");
-  if (start === -1 || end <= start) return answerFromRetrieval(hits);
+  if (start === -1 || end <= start) {
+    return answerFromRetrieval(
+      hits,
+      "The answer-generation model's response wasn't valid JSON, so this is the retrieved manual text rather than a generated answer.",
+    );
+  }
 
   try {
     const parsed = JSON.parse(content.slice(start, end + 1));
@@ -246,6 +254,9 @@ async function answerWithGroq(message: string, hits: ScoredChunk[], apiKey: stri
       refusals: Array.isArray(parsed.refusals) ? parsed.refusals : [],
     };
   } catch {
-    return answerFromRetrieval(hits);
+    return answerFromRetrieval(
+      hits,
+      "The answer-generation model's response couldn't be parsed as the expected JSON shape, so this is the retrieved manual text rather than a generated answer.",
+    );
   }
 }
