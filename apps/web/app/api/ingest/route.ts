@@ -123,6 +123,12 @@ export async function POST(request: NextRequest) {
     // 2. Identify the machine so retrieval can filter on it
     const machine = detectMachine(file.name, pages.slice(0, 3).map((p) => p.text).join("\n"));
 
+    // No OCR pipeline (deliberate -- real vendor manuals tested came back
+    // 100% digital text; not worth the engineering cost for a near-zero
+    // case here). This is the honest substitute: a scanned/near-blank page
+    // is still surfaced, not silently dropped.
+    const lowTextPages = pages.filter((p) => p.text.trim().length < 40).map((p) => p.page);
+
     // 3. Blocks → chunks → fault records
     const blocks = buildBlocks(pages, { documentId, outline });
     const chunks = chunkBlocks(blocks, {
@@ -174,6 +180,9 @@ export async function POST(request: NextRequest) {
       faults: faults.length,
       fault_codes: [...new Set(faults.map((f) => f.codeRaw))].slice(0, 40),
       dims: vectors[0]?.length ?? 0,
+      // Pages with near-zero extractable text -- likely scanned/image-only.
+      // No OCR pipeline yet, so content on these pages was not indexed.
+      low_text_pages: lowTextPages,
       elapsed_ms: Date.now() - started,
       indexed_at: new Date().toISOString(),
     });

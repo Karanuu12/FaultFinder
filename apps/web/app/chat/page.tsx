@@ -240,6 +240,7 @@ export default function ChatPage() {
     { state: "idle", message: "" },
   );
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [uploadPct, setUploadPct] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -274,25 +275,58 @@ export default function ChatPage() {
     }
   };
 
-  const handleUpload = async (file: File) => {
-    setUpload({ state: "busy", message: `Parsing and indexing ${file.name}…` });
+  /**
+   * fetch() has no upload-progress event, so this uses XHR for the real
+   * byte-transfer percentage (0-60%). Parsing + embedding happens
+   * server-side after the transfer completes with no granular signal back,
+   * so 60-95% is a slow simulated tick while waiting -- honest about being
+   * two different kinds of progress, not a fake full-request bar.
+   */
+  const handleUpload = (file: File) => {
+    setUploadPct(0);
+    setUpload({ state: "busy", message: `Uploading ${file.name}…` });
     const body = new FormData();
     body.set("file", file);
-    try {
-      const res = await fetch("/api/ingest", { method: "POST", body });
-      const data = await res.json();
-      if (!res.ok) {
-        setUpload({ state: "error", message: data.error ?? `Upload failed (${res.status})` });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/ingest");
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setUploadPct(Math.min(60, Math.round((e.loaded / e.total) * 60)));
+    };
+    xhr.upload.onload = () => {
+      setUpload({ state: "busy", message: `Parsing and indexing ${file.name}… (large manuals take a minute)` });
+      let pct = 60;
+      const tick = setInterval(() => {
+        pct = Math.min(95, pct + 2);
+        setUploadPct(pct);
+      }, 800);
+      xhr.onloadend = () => clearInterval(tick);
+    };
+
+    xhr.onload = () => {
+      setUploadPct(100);
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* fall through to generic error below */
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        setUpload({ state: "error", message: (data.error as string) ?? `Upload failed (${xhr.status})` });
         return;
       }
+      const lowText = Array.isArray(data.low_text_pages) ? (data.low_text_pages as number[]) : [];
+      const warn = lowText.length ? ` ${lowText.length} page(s) had little/no extractable text (scanned?).` : "";
       setUpload({
         state: "done",
-        message: `Indexed ${data.title}: ${data.pages} pages, ${data.chunks} chunks, ${data.faults} fault codes.`,
+        message: `Indexed ${data.title}: ${data.pages} pages, ${data.chunks} chunks, ${data.faults} fault codes.${warn}`,
       });
       refreshStats();
-    } catch (err) {
-      setUpload({ state: "error", message: err instanceof Error ? err.message : "Upload failed" });
-    }
+    };
+
+    xhr.onerror = () => setUpload({ state: "error", message: "Network error during upload" });
+    xhr.send(body);
   };
 
   const handleSubmit = async (text: string) => {
@@ -439,20 +473,33 @@ export default function ChatPage() {
             </label>
 
             {upload.state !== "idle" && (
-              <div
-                className={cn(
-                  "mt-2 flex items-start gap-2 rounded-xl px-3 py-2 text-[11px] leading-snug",
-                  upload.state === "error"
-                    ? "bg-red-50 text-red-700"
-                    : upload.state === "done"
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-neutral-100 text-neutral-600",
+              <div className="mt-2 space-y-1.5">
+                {upload.state === "busy" && (
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                      style={{ width: `${uploadPct}%` }}
+                    />
+                  </div>
                 )}
-              >
-                {upload.state === "done" && <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />}
-                {upload.state === "error" && <AlertCircle className="mt-0.5 size-3.5 shrink-0" />}
-                {upload.state === "busy" && <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />}
-                <span>{upload.message}</span>
+                <div
+                  className={cn(
+                    "flex items-start gap-2 rounded-xl px-3 py-2 text-[11px] leading-snug",
+                    upload.state === "error"
+                      ? "bg-red-50 text-red-700"
+                      : upload.state === "done"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-neutral-100 text-neutral-600",
+                  )}
+                >
+                  {upload.state === "done" && <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />}
+                  {upload.state === "error" && <AlertCircle className="mt-0.5 size-3.5 shrink-0" />}
+                  {upload.state === "busy" && <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />}
+                  <span>
+                    {upload.message}
+                    {upload.state === "busy" && ` (${uploadPct}%)`}
+                  </span>
+                </div>
               </div>
             )}
           </div>
