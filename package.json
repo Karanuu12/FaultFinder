@@ -17,6 +17,7 @@
     "concurrently": "^9.2.4"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "tsx": "^4.23.13"
   }
 }

@@ -2,16 +2,29 @@
  * Seed script: parse, chunk, embed, and index all synthetic manuals.
  * Usage: pnpm seed
  *
- * Requires: GEMINI_API_KEY (env or .env)
- * Uses pdf-parse in Node (no Python service needed).
+ * Requires: GEMINI_API_KEY, QDRANT_CLUSTER_ENDPOINT, QDRANT_API_KEY (in .env.local)
  */
+import * as dotenv from "dotenv";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+// Load .env.local from apps/web (where Next.js expects it)
+const __dirname = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: resolve(__dirname, "../apps/web/.env.local") });
+
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import { GeminiEmbeddingClient, QdrantStore, MemoryVectorStore } from "@timmo/rag";
+import pdfParse from "pdf-parse";
+import crypto from "crypto";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANUALS_DIR = path.resolve(__dirname, "..", "manuals");
+
+// Qdrant requires UUID or integer point IDs; generate a deterministic UUID v5
+function stringToUUID(input: string): string {
+  const hash = crypto.createHash("sha256").update(input).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(12, 15)}-a${hash.slice(15, 18)}-${hash.slice(18, 30)}`;
+}
 
 function pdfParseBuffer(buffer: Buffer) {
   const text = buffer.toString("utf-8").replace(/[^\x20-\x7E\n]/g, "").trim();
@@ -30,11 +43,11 @@ async function main() {
     apiKey: process.env.GEMINI_API_KEY ?? "",
   });
 
-  const vectorStore = process.env.QDRANT_URL
+  const vectorStore = process.env.QDRANT_CLUSTER_ENDPOINT ?? process.env.QDRANT_URL
     ? new QdrantStore({
-        url: process.env.QDRANT_URL,
+        url: process.env.QDRANT_CLUSTER_ENDPOINT ?? process.env.QDRANT_URL ?? "",
         apiKey: process.env.QDRANT_API_KEY,
-        dims: 768,
+        dims: 3072,
       })
     : new MemoryVectorStore();
 
@@ -63,8 +76,13 @@ async function main() {
     // Embed + index
     const texts = chunks.map((c) => c.text);
     const vectors = await embedder.embedMany(texts);
-    await vectorStore.deleteByDocument(documentId);
-    await vectorStore.index(chunks, vectors);
+    // Convert string IDs to deterministic UUID v5 format for Qdrant compatibility
+    const qdrantChunks = chunks.map((c) => ({
+      ...c,
+      id: stringToUUID(c.id),
+    }));
+    try { await vectorStore.deleteByDocument(documentId); } catch { /* first seed */ }
+    await vectorStore.index(qdrantChunks, vectors);
     console.log(`  Indexed ${chunks.length} chunks for "${documentId}"`);
   }
 
@@ -95,6 +113,7 @@ async function parseViaPython(
     section: String(c.section),
     text: String(c.text),
     char_count: Number(c.char_count),
+    images: (c.images ?? []) as string[],
   }));
 }
 
@@ -103,7 +122,6 @@ async function parseViaNode(
   filename: string,
   documentId: string,
 ): Promise<any[]> {
-  const pdfParse = (await import("pdf-parse")).default ?? (await import("pdf-parse"));
   const data = await pdfParse(buffer);
   const text = data.text ?? "";
   return text
