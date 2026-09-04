@@ -38,9 +38,18 @@ const MACHINE_RULES: { id: string; model: string; manufacturer: string; test: Re
 ];
 
 function detectMachine(filename: string, firstPages: string) {
-  const haystack = `${filename}\n${firstPages.slice(0, 4000)}`;
+  // Filename first: it's a deliberate, reliable signal. Page text is not --
+  // a manual can legitimately cross-reference a DIFFERENT machine's error
+  // code in its own text (e.g. "not the same as E101 on the X-300"), which
+  // would otherwise mis-tag the whole document as that other machine and
+  // silently defeat cross-document ambiguity detection (two machines that
+  // both reference each other end up sharing one machineId, so neither
+  // looks ambiguous against the other anymore).
   for (const rule of MACHINE_RULES) {
-    if (rule.test.test(haystack)) return rule;
+    if (rule.test.test(filename)) return rule;
+  }
+  for (const rule of MACHINE_RULES) {
+    if (rule.test.test(firstPages.slice(0, 4000))) return rule;
   }
   const slug = filename
     .replace(/\.pdf$/i, "")

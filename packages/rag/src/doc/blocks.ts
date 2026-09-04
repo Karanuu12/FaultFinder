@@ -189,7 +189,16 @@ export function buildBlocks(pages: PageInput[], opts: BlockBuildOptions): Block[
 
       // Headings
       const numbered = trimmed.match(NUMBERED_HEADING);
-      if (numbered && trimmed.length <= 90) {
+      // A bare single-level number ("3.", "4)") also matches a numbered LIST
+      // ITEM under "Probable causes:" / "Corrective action:" -- "3. Relief
+      // valve stuck partially open..." is prose, not a heading, and treating
+      // it as one both corrupts the section hierarchy for everything after
+      // it AND steals the line from the step-list detection below, which is
+      // where it actually belongs. A real heading here is short and doesn't
+      // end mid-sentence; a list item is a full, period-terminated sentence.
+      const looksLikeListItem =
+        !!numbered && /[.!?]$/.test(numbered[2]) && numbered[2].length > 40;
+      if (numbered && !looksLikeListItem && trimmed.length <= 90) {
         flushAll();
         const level = numbered[1].split(".").length - 1;
         headingPath = [...headingPath.slice(0, level), trimmed];
@@ -198,7 +207,14 @@ export function buildBlocks(pages: PageInput[], opts: BlockBuildOptions): Block[
       }
       if (LABEL_HEADING.test(trimmed)) {
         flushAll();
-        headingPath = [...headingPath.slice(0, 1), trimmed];
+        // Nest under the CURRENT deepest heading ("3.1 E101 -- Low Hydraulic
+        // Pressure"), not just the top-level ancestor ("3. ERROR CODE
+        // REFERENCE"). Truncating to depth 1 here was discarding exactly the
+        // code/section context that makes "Corrective action:" retrievable
+        // by the error code it belongs to -- without it, a "what's the fix"
+        // query scores this chunk no better than unrelated page content,
+        // because neither its breadcrumb nor its own text mentions the code.
+        headingPath = [...headingPath, trimmed].slice(-6);
         push("heading", trimmed, page, { level: Math.max(0, headingPath.length - 1) });
         continue;
       }

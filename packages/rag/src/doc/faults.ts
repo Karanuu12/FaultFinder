@@ -243,7 +243,11 @@ export function extractFromSection(
     codeNorm: normalizeCode(codeRaw),
     machineId,
     model,
-    meaning: meaning.trim(),
+    // A PDF whose em-dash glyph doesn't extract cleanly (seen in ReportLab-
+    // generated PDFs without a proper ToUnicode CMap) leaves a stray "?" or
+    // similar junk character where the separator should have been consumed.
+    // Strip a leading run of non-alphanumeric characters defensively.
+    meaning: meaning.trim().replace(/^[^A-Za-z0-9]+/, "").trim(),
     causes,
     steps,
     severity: warnings.length ? severityOf(warnings.join(" ")) ?? "warning" : undefined,

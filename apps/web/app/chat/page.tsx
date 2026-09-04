@@ -46,6 +46,25 @@ interface ChatMessage {
   content: string;
   structured?: CitedAnswer;
 }
+
+/**
+ * Natural-language summary of a structured answer, for sending as
+ * conversation history. Sending the raw CitedAnswer JSON back to the LLM as
+ * "what was said" is both token-wasteful and a worse read for the model than
+ * the plain-English answer it would have produced anyway -- this is what the
+ * model actually sees as its own prior turn.
+ */
+function summarizeForHistory(a: CitedAnswer): string {
+  const parts: string[] = [];
+  if (a.error_code) parts.push(`${a.error_code}:`);
+  if (a.meaning) parts.push(a.meaning);
+  if (a.probable_causes.length) parts.push(`Probable causes: ${a.probable_causes.join("; ")}.`);
+  if (a.corrective_action.length) {
+    parts.push(`Steps: ${a.corrective_action.map((s) => s.action).join(" ")}`);
+  }
+  if (a.refusals.length) parts.push(a.refusals.join(" "));
+  return parts.join(" ").slice(0, 800);
+}
 interface IndexStats {
   documents: number;
   chunks: number;
@@ -269,7 +288,7 @@ export default function ChatPage() {
           message: text,
           history: messages.map((m) => ({
             role: m.role,
-            content: m.structured ? JSON.stringify(m.structured) : m.content,
+            content: m.structured ? summarizeForHistory(m.structured) : m.content,
           })),
         }),
       });
