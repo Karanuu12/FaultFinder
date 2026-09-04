@@ -92,6 +92,7 @@ async function parseViaPython(
     section: String(c.section),
     text: String(c.text),
     char_count: Number(c.char_count),
+    images: (c.images as string[]) ?? [],
   }));
 }
 
@@ -115,5 +116,6 @@ async function parseViaNode(
     section: "",
     text: body,
     char_count: body.length,
+    images: [],
   }));
 }
