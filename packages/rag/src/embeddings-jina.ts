@@ -30,6 +30,8 @@ export interface JinaConfig {
   dimensions?: number;
   /** Texts per request. Jina accepts large arrays; this keeps payloads sane. */
   batchSize?: number;
+  /** Batches in flight at once. Independent HTTP calls, not related to dims/model. */
+  concurrency?: number;
   baseUrl?: string;
 }
 
@@ -40,6 +42,7 @@ export class JinaEmbeddingClient {
   private model: string;
   private dimensions: number;
   private batchSize: number;
+  private concurrency: number;
   private baseUrl: string;
 
   constructor(config: JinaConfig) {
@@ -48,6 +51,7 @@ export class JinaEmbeddingClient {
     this.model = config.model ?? "jina-embeddings-v3";
     this.dimensions = config.dimensions ?? JINA_DEFAULT_DIMS;
     this.batchSize = config.batchSize ?? 64;
+    this.concurrency = config.concurrency ?? 4;
     this.baseUrl = config.baseUrl ?? JINA_URL;
   }
 
@@ -71,6 +75,14 @@ export class JinaEmbeddingClient {
     return v;
   }
 
+  /**
+   * Batches ran fully sequentially before -- one Jina round-trip at a time,
+   * each retry (up to ~46s worst case) blocking every batch after it. On a
+   * large manual (hundreds of chunks, a dozen-plus batches) that serializes
+   * into multi-minute ingests, worse under rate limiting since retries stack
+   * instead of overlapping. Bounded concurrency fixes both: independent
+   * batches run in parallel, and a rate-limited one no longer blocks the rest.
+   */
   private async embedBatched(
     inputs: string[],
     task: "retrieval.passage" | "retrieval.query",
@@ -79,12 +91,23 @@ export class JinaEmbeddingClient {
     if (!inputs?.length) return [];
 
     const out: number[][] = new Array(inputs.length);
+    const chunks: { start: number; batch: string[] }[] = [];
     for (let i = 0; i < inputs.length; i += this.batchSize) {
-      const batch = inputs.slice(i, i + this.batchSize);
-      const vectors = await this.postWithRetry(batch, task);
-      for (let j = 0; j < vectors.length; j++) out[i + j] = vectors[j];
-      onProgress?.(Math.min(i + batch.length, inputs.length), inputs.length);
+      chunks.push({ start: i, batch: inputs.slice(i, i + this.batchSize) });
     }
+
+    let doneCount = 0;
+    let nextChunk = 0;
+    const worker = async () => {
+      while (nextChunk < chunks.length) {
+        const { start, batch } = chunks[nextChunk++];
+        const vectors = await this.postWithRetry(batch, task);
+        for (let j = 0; j < vectors.length; j++) out[start + j] = vectors[j];
+        doneCount += batch.length;
+        onProgress?.(Math.min(doneCount, inputs.length), inputs.length);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(this.concurrency, chunks.length) }, worker));
     return out;
   }
 
