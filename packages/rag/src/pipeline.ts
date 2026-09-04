@@ -5,16 +5,21 @@ import type {
   ScoredHit,
   StreamEvent,
   VectorStore,
+  CitedAnswer,
 } from "./types";
 import { OllamaEmbeddingClient } from "./embeddings";
 import {
   expandQuery,
-  gateByScore,
   detectMachineScope,
   dedupeHits,
   exactMatchHits,
-  DEFAULT_MIN_SCORE,
 } from "./retrieval";
+import {
+  runHallucinationControl,
+  scoreGate,
+  detectMachineAmbiguity,
+  DEFAULT_MIN_SCORE,
+} from "./hallucination-control";
 import type { GroqClient } from "./llm";
 
 export interface PipelineConfig {
@@ -40,23 +45,17 @@ export class RagPipeline {
     await this.vectorStore.index(chunks, vectors);
   }
 
-  /** Retrieve vector hits with high topK to get a full candidate pool for exact matching. */
   private async retrieve(queryVector: number[], topK: number): Promise<ScoredHit[]> {
     return this.vectorStore.query(queryVector, topK);
   }
 
-  /** Combine vector + exact matches, dedup, scope-filter. */
   private refineHits(
     allVecHits: ScoredHit[],
     query: string,
     machineScope?: string,
   ): { pool: ScoredHit[] } {
     const deduped = dedupeHits(allVecHits);
-
-    // Exact-match pre-retrieval on the full pool
     const exactHits = exactMatchHits(query, deduped);
-
-    // Merge: exact matches (score 1.0) + remaining vector hits, dedup
     const merged = [...exactHits, ...deduped];
     const seen = new Set<string>();
     const pool: ScoredHit[] = [];
@@ -67,44 +66,59 @@ export class RagPipeline {
         pool.push(h);
       }
     }
-
-    // Machine scope filter
     const scoped = machineScope
       ? pool.filter((h) =>
           h.document_id.toLowerCase().includes(machineScope.toLowerCase().replace(/-/g, "")),
         )
       : pool;
-
     return { pool: scoped.length ? scoped : pool };
   }
 
   async query(req: ChatRequest): Promise<ChatResult> {
     const queries = expandQuery(req.message);
     const machineScope = req.machine ?? detectMachineScope(req.message);
-    const topK = Math.max(req.top_k ?? 50, 100); // large enough to act as "all"
+    const topK = Math.max(req.top_k ?? 50, 100);
 
     const queryVector = await this.embedder.embedQuery(queries.join("\n"));
     const allHits = await this.retrieve(queryVector, topK);
     const { pool } = this.refineHits(allHits, req.message, machineScope);
 
-    const minScore = req.min_score ?? DEFAULT_MIN_SCORE;
-    const slice = pool.slice(0, 12);
-    const { accepted, refusals } = gateByScore(slice, minScore);
-
-    if (accepted.length === 0) {
+    // Stage 1: Machine ambiguity detection (pre-generation)
+    const ambiguity = detectMachineAmbiguity(req.message, pool);
+    if (ambiguity.ambiguous) {
       return {
         answer: {
-          meaning: refusals[0] ?? "No matching content found.",
+          meaning: ambiguity.question,
           probable_causes: [],
           corrective_action: [],
           citations: [],
           confidence: "low",
-          refusals,
+          refusals: [ambiguity.question],
         },
         sources: [],
       };
     }
 
+    // Stage 2: Score gate
+    const minScore = req.min_score ?? DEFAULT_MIN_SCORE;
+    const slice = pool.slice(0, 12);
+    const { accepted, refusals: scoreRefusals } = scoreGate(slice, minScore);
+
+    if (accepted.length === 0) {
+      return {
+        answer: {
+          meaning: scoreRefusals[0] ?? "No matching content found.",
+          probable_causes: [],
+          corrective_action: [],
+          citations: [],
+          confidence: "low",
+          refusals: scoreRefusals,
+        },
+        sources: [],
+      };
+    }
+
+    // Generate LLM answer
     const answer = await this.llm.generateAnswer(
       req.message,
       accepted,
@@ -112,11 +126,44 @@ export class RagPipeline {
       machineScope,
     );
 
-    // Attach images from source chunks
-    const sourceImages = accepted.flatMap((s) => s.images ?? []).filter(Boolean);
-    const uniqueImages = [...new Set(sourceImages)].slice(0, 6);
+    // Stage 3: Post-generation hallucination control
+    const hcResult = await runHallucinationControl(
+      req.message,
+      pool,
+      accepted,
+      answer,
+    );
 
-    return { answer: { ...answer, images: uniqueImages }, sources: accepted };
+    // Attach images from source chunks
+    const sourceImages = [...new Set(accepted.flatMap((s) => s.images ?? []))].filter(Boolean).slice(0, 6);
+
+    // Handle verdict
+    if (hcResult.verdict === "reject") {
+      return {
+        answer: {
+          meaning: "The answer did not pass the hallucination control checks.",
+          probable_causes: [],
+          corrective_action: [],
+          citations: [],
+          images: sourceImages,
+          confidence: "low",
+          refusals: hcResult.refusals.length > 0
+            ? hcResult.refusals
+            : ["The system's safety checks flagged this response. The answer has been suppressed."],
+        },
+        sources: accepted,
+      };
+    }
+
+    return {
+      answer: {
+        ...answer,
+        images: sourceImages,
+        ...(hcResult.verdict === "flag" ? { confidence: "low" as const } : {}),
+        refusals: hcResult.refusals,
+      },
+      sources: accepted,
+    };
   }
 
   async *stream(req: ChatRequest): AsyncGenerator<StreamEvent> {
@@ -130,20 +177,37 @@ export class RagPipeline {
 
     yield { type: "context", document: machineScope ?? "any", chunks: pool };
 
+    const ambiguity = detectMachineAmbiguity(req.message, pool);
+    if (ambiguity.ambiguous) {
+      yield {
+        type: "answer",
+        answer: {
+          meaning: ambiguity.question,
+          probable_causes: [],
+          corrective_action: [],
+          citations: [],
+          confidence: "low",
+          refusals: [ambiguity.question],
+        },
+      };
+      yield { type: "done" };
+      return;
+    }
+
     const minScore = req.min_score ?? DEFAULT_MIN_SCORE;
     const slice = pool.slice(0, 12);
-    const { accepted, refusals } = gateByScore(slice, minScore);
+    const { accepted, refusals: scoreRefusals } = scoreGate(slice, minScore);
 
     if (accepted.length === 0) {
       yield {
         type: "answer",
         answer: {
-          meaning: refusals[0] ?? "No matching content found.",
+          meaning: scoreRefusals[0] ?? "No matching content found.",
           probable_causes: [],
           corrective_action: [],
           citations: [],
           confidence: "low",
-          refusals,
+          refusals: scoreRefusals,
         },
       };
       yield { type: "done" };
@@ -156,8 +220,40 @@ export class RagPipeline {
       req.message, accepted, req.history ?? [], machineScope,
     );
 
+    const hcResult = await runHallucinationControl(
+      req.message, pool, accepted, answer,
+    );
+
     const sourceImages = [...new Set(accepted.flatMap((s) => s.images ?? []))].slice(0, 6);
-    yield { type: "answer", answer: { ...answer, images: sourceImages } };
-    yield { type: "done", answer: { ...answer, images: sourceImages } };
+
+    if (hcResult.verdict === "reject") {
+      yield {
+        type: "answer",
+        answer: {
+          meaning: "The answer did not pass the hallucination control checks.",
+          probable_causes: [],
+          corrective_action: [],
+          citations: [],
+          images: sourceImages,
+          confidence: "low",
+          refusals: hcResult.refusals.length > 0
+            ? hcResult.refusals
+            : ["The system's safety checks flagged this response."],
+        },
+      };
+      yield { type: "done" };
+      return;
+    }
+
+    yield {
+      type: "answer",
+      answer: {
+        ...answer,
+        images: sourceImages,
+        ...(hcResult.verdict === "flag" ? { confidence: "low" as const } : {}),
+        refusals: hcResult.refusals,
+      },
+    };
+    yield { type: "done" };
   }
 }

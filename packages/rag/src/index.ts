@@ -5,3 +5,4 @@ export * from "./memory-store";
 export * from "./retrieval";
 export * from "./llm";
 export * from "./pipeline";
+export * from "./hallucination-control";

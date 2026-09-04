@@ -2,7 +2,7 @@
  * Retrieval layer: hybrid query expansion, cross-manual disambiguation,
  * score filtering, and re-ranking.
  */
-import type { ChatRequest, ScoredHit, Chunk } from "./types";
+import type { Chunk, ScoredHit } from "./types";
 
 /**
  * Build a refined search query from the raw user message.
@@ -20,47 +20,6 @@ export function expandQuery(raw: string): string[] {
     queries.push(raw.trim());
   }
   return [...new Set(queries)];
-}
-
-/** Score threshold for the hallucination gate. */
-export const DEFAULT_MIN_SCORE = 0.55;
-
-/**
- * Cull low-confidence hits with NO source overlap.
- * Returns hits that pass the score threshold, plus up to 2 of the
- * high-scoring ones even if below threshold (graceful degradation).
- */
-export function gateByScore(hits: ScoredHit[], minScore = DEFAULT_MIN_SCORE): {
-  accepted: ScoredHit[];
-  refusals: string[];
-} {
-  const passed = hits.filter((h) => h.score >= minScore);
-  const borderline = hits.filter((h) => h.score < minScore && h.score >= 0.35);
-  const refusals: string[] = [];
-
-  if (passed.length === 0) {
-    if (hits.length === 0) {
-      refusals.push(
-        "No relevant content was found in the loaded manuals for this query.",
-      );
-      return { accepted: [], refusals };
-    }
-    if (borderline.length > 0) {
-      refusals.push(
-        "The retrieved manual passages scored below the reliability threshold. " +
-        "The system is refusing to guess. Please rephrase or include a more " +
-        "specific error code or machine model.",
-      );
-      return { accepted: [], refusals };
-    }
-    refusals.push(
-      "The manuals I have do not contain a clear answer to this query. " +
-      "Please check that the relevant manual has been uploaded.",
-    );
-    return { accepted: [], refusals };
-  }
-
-  return { accepted: passed, refusals: [] };
 }
 
 /**

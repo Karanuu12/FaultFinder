@@ -60,4 +60,3 @@ export class OllamaEmbeddingClient {
 }
 
 export { OllamaEmbeddingClient as EmbeddingClient };
-export type { EmbeddingConfig };
