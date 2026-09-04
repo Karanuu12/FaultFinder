@@ -57,26 +57,48 @@ def _extract_mupdf(raw: bytes, include_images: bool = False) -> list[dict[str, A
 def _extract_images(page: pymupdf.Page, page_number: int) -> list[str]:
     """Extract embedded images from a page as base64 JPEG thumbnails.
 
-    Returns up to 3 largest images per page, each ≤ MAX_IMAGE_SIZE.
+    Returns up to 3 largest images per page, each <= MAX_IMAGE_SIZE.
+
+    get_images() returns (xref, smask, width, height, bpc, colorspace, ...) --
+    width/height are already known from the PDF's own image dict, so we filter
+    on size BEFORE building a Pixmap. Decoding first and checking after (the
+    previous approach) means every icon and logo on every page pays the full
+    decode cost only to be thrown away; on a 300+ page manual with a header
+    logo on each page that's hundreds of wasted decodes per ingest.
     """
     import base64
 
-    image_list = page.get_images()
+    image_list = page.get_images(full=True)
+    candidates: list[tuple[int, int]] = []  # (xref, area) -- cheap pre-filter
+
+    for img_info in image_list:
+        xref = img_info[0]
+        width = img_info[2] if len(img_info) > 2 else 0
+        height = img_info[3] if len(img_info) > 3 else 0
+        if width and height:
+            if width < 50 or height < 50 or width > 2000 or height > 2000:
+                continue
+            candidates.append((xref, width * height))
+        else:
+            # Metadata didn't carry dimensions (rare) -- decode as a fallback
+            # rather than silently dropping a potentially real figure.
+            candidates.append((xref, 0))
+
+    # Decode largest-first and stop once we have 3 that survive the real
+    # (post-decode) size check, instead of decoding every candidate.
+    candidates.sort(key=lambda c: -c[1])
     extracted: list[tuple[int, bytes]] = []
 
-    for img_index, img_info in enumerate(image_list):
-        xref = img_info[0]
+    for xref, _ in candidates:
+        if len(extracted) >= 3:
+            break
         try:
             # PyMuPDF takes (doc, xref) positionally; the keyword form raises
             # "Pixmap.__init__() got an unexpected keyword argument 'doc'".
             pix = pymupdf.Pixmap(page.parent, xref)  # type: ignore[attr-defined]
-            # Skip large or tiny images
-            if pix.width < 50 or pix.height < 50:
-                continue
-            if pix.width > 2000 or pix.height > 2000:
+            if pix.width < 50 or pix.height < 50 or pix.width > 2000 or pix.height > 2000:
                 continue
 
-            # Convert to JPEG bytes
             pix = pymupdf.Pixmap(pix, 0)  # remove alpha if present  # type: ignore[attr-defined]
             img_bytes = pix.tobytes("jpeg", jpg_quality=70)
             if len(img_bytes) > MAX_IMAGE_SIZE:
@@ -86,7 +108,6 @@ def _extract_images(page: pymupdf.Page, page_number: int) -> list[str]:
         except Exception:
             continue
 
-    # Keep up to 3 largest images
     extracted.sort(key=lambda x: -x[0])
     result: list[str] = []
     for _, img_bytes in extracted[:3]:

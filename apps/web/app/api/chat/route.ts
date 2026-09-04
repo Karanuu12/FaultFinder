@@ -36,6 +36,16 @@ function citationFor(c: ScoredChunk): Citation {
   };
 }
 
+/**
+ * Diagrams/figures attached to the answer, sourced ONLY from the chunks that
+ * were actually cited — not the whole retrieved pool. That keeps images tied
+ * to what the answer references rather than showing every diagram that
+ * happened to be nearby in the manual.
+ */
+function imagesFor(hits: ScoredChunk[]): string[] {
+  return [...new Set(hits.flatMap((h) => h.figureRefs ?? []))].filter(Boolean).slice(0, 6);
+}
+
 /** Phase 9: the same code meaning different things on different machines. */
 function checkAmbiguity(records: FaultRecord[]): { ambiguous: boolean; question: string } {
   const byMachine = new Map<string, FaultRecord>();
@@ -152,11 +162,13 @@ export async function POST(request: NextRequest) {
 function answerFromRetrieval(hits: ScoredChunk[]) {
   const best = hits[0];
   const body = best.text.split("\n\n").slice(1).join("\n\n").trim() || best.text;
+  const cited = hits.slice(0, 4);
   return {
     meaning: body.slice(0, 600),
     probable_causes: [],
     corrective_action: [],
-    citations: hits.slice(0, 4).map(citationFor),
+    citations: cited.map(citationFor),
+    images: imagesFor(cited),
     confidence: "medium" as const,
     refusals: [
       "GROQ_API_KEY is not set, so this is the retrieved manual text rather than a generated answer.",
@@ -183,7 +195,10 @@ async function answerWithGroq(message: string, hits: ScoredChunk[], apiKey: stri
           content:
             "You answer machine-troubleshooting questions strictly from the supplied manual excerpts. " +
             "Tag every claim with the source it came from, e.g. [S2]. If the excerpts do not answer " +
-            "the question, say so in refusals rather than guessing. Output JSON only.",
+            "the question, say so in refusals rather than guessing. Some sources are figures or " +
+            "diagrams, marked with a leading [Figure] line — include one of those in used_sources " +
+            "whenever it is the diagram, drawing, wiring layout, or dimension illustration the question " +
+            "is actually asking about, not just because it appeared in the context. Output JSON only.",
         },
         {
           role: "user",
@@ -214,17 +229,16 @@ async function answerWithGroq(message: string, hits: ScoredChunk[], apiKey: stri
     // Citations are resolved from the sources the model actually used —
     // it never gets to invent a page number.
     const used: number[] = Array.isArray(parsed.used_sources) ? parsed.used_sources : [];
-    const cited = used
-      .map((n: number) => hits[n - 1])
-      .filter(Boolean)
-      .map(citationFor);
+    const citedHits = used.map((n: number) => hits[n - 1]).filter(Boolean);
+    const fallbackHits = citedHits.length ? citedHits : hits.slice(0, 3);
 
     return {
       error_code: parsed.error_code || undefined,
       meaning: String(parsed.meaning ?? ""),
       probable_causes: Array.isArray(parsed.probable_causes) ? parsed.probable_causes : [],
       corrective_action: Array.isArray(parsed.corrective_action) ? parsed.corrective_action : [],
-      citations: cited.length ? cited : hits.slice(0, 3).map(citationFor),
+      citations: fallbackHits.map(citationFor),
+      images: imagesFor(fallbackHits),
       confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "low",
       refusals: Array.isArray(parsed.refusals) ? parsed.refusals : [],
     };

@@ -59,7 +59,11 @@ async function parseDocument(
   const form = new FormData();
   form.set("file", file);
   form.set("document_id", documentId);
-  form.set("include_images", "false");
+  // Extract embedded diagrams/figures so they can be shown in cited answers.
+  // Capped at 3 per page, <=500KB each, pre-filtered by size before decoding
+  // (services/document-processor/app/pdf.py) so this stays reasonable even on
+  // a 300+ page manual.
+  form.set("include_images", "true");
 
   const res = await fetch(`${PYTHON_URL}/parse`, { method: "POST", body: form });
   if (!res.ok) {
@@ -71,7 +75,7 @@ async function parseDocument(
   const pages: PageInput[] = (data.pages ?? []).map((p: Record<string, unknown>) => ({
     page: Number(p.page),
     text: String(p.text ?? ""),
-    images: [],
+    images: Array.isArray(p.images) ? (p.images as string[]) : [],
   }));
   // The PDF's own bookmark tree — exact section titles and pages. Preferred over
   // inferring headings from the text, which produced section labels like

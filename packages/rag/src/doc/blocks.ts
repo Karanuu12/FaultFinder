@@ -48,6 +48,14 @@ const ADMONITION = /^(DANGER|WARNING|CAUTION|NOTICE|IMPORTANT|NOTE)\b[:!.\s-]*(.
 
 const STEP_LINE = /^\s*(\d{1,2})[.)]\s+(\S.*)$/;
 
+/**
+ * "Figure 7-3 Drive dimensions", "Fig. 4-1: Wiring diagram", "Diagram 2 — Torque sequence".
+ * Deliberately excludes "Table" — markdown tables are already parsed as their own
+ * block kind, so a plain-text "Table N" line here would just be noise.
+ */
+const FIGURE_CAPTION_RE =
+  /^(Fig(?:ure)?|Diagram|Schematic)\.?\s*(\d+(?:[.\-]\d+)*)\s*[:.\-–—]?\s*(.*)$/i;
+
 function severityFrom(word: string): AdmonitionSeverity {
   const w = word.toLowerCase();
   if (w === "danger") return "danger";
@@ -107,6 +115,12 @@ export function buildBlocks(pages: PageInput[], opts: BlockBuildOptions): Block[
     let tableLines: string[] = [];
     let steps: StepData[] = [];
     let stepPreamble = "";
+    // Figure/diagram captions found in this page's text, in reading order —
+    // paired with page.images by position below. Best-effort: PyMuPDF gives us
+    // images per page with no bbox, so we can't match a caption to a specific
+    // image directly, but pairing in order is right far more often than not
+    // (a page rarely has more than one uncaptioned figure).
+    const pageCaptions: { label: string; caption: string }[] = [];
 
     const flushParagraph = () => {
       if (paragraph.length) {
@@ -152,6 +166,16 @@ export function buildBlocks(pages: PageInput[], opts: BlockBuildOptions): Block[
         flushSteps();
         flushParagraph();
         continue;
+      }
+
+      // Record figure/diagram captions as we pass them, but don't consume the
+      // line — it still flows into paragraph/heading handling below like any
+      // other text.
+      if (trimmed.length <= 140) {
+        const fig = trimmed.match(FIGURE_CAPTION_RE);
+        if (fig) {
+          pageCaptions.push({ label: `${fig[1]} ${fig[2]}`, caption: fig[3]?.trim() ?? "" });
+        }
       }
 
       // Markdown table rows accumulate until the run ends.
@@ -218,10 +242,20 @@ export function buildBlocks(pages: PageInput[], opts: BlockBuildOptions): Block[
 
     flushAll();
 
-    // Figures: one block per page image, so captions can be attached later.
+    // Figures: one block per page image, paired in order with any figure/diagram
+    // captions found on the page. A captioned figure is retrievable by its
+    // caption text (dense + lexical search can't index pixels); an uncaptioned
+    // one still carries its page and section, which is enough for it to surface
+    // alongside the surrounding text that cites it.
     (page.images ?? []).forEach((href, i) => {
-      push("figure", `[Figure p${page.page}-${i + 1}]`, page, {
-        figure: { figureId: `${opts.documentId}-p${page.page}-f${i + 1}`, href },
+      const cap = pageCaptions[i];
+      push("figure", cap ? `[Figure] ${cap.label}: ${cap.caption}` : `[Figure p${page.page}-${i + 1}]`, page, {
+        figure: {
+          figureId: `${opts.documentId}-p${page.page}-f${i + 1}`,
+          href,
+          label: cap?.label,
+          caption: cap?.caption,
+        },
       });
     });
   }
