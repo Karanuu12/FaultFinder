@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 import anyio
 
 from .chunking import chunk_pages
+from .embeddings import DIMS as EMBED_DIMS, embed_texts
 from .pdf import extract_outline, extract_pdf_pages
 
 app = FastAPI(
@@ -77,6 +78,16 @@ class ChunkResponse(BaseModel):
     chunks: list[Chunk]
 
 
+class EmbedRequest(BaseModel):
+    texts: list[str]
+    task: str = "retrieval.passage"
+
+
+class EmbedResponse(BaseModel):
+    vectors: list[list[float]]
+    dims: int
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str
@@ -126,6 +137,20 @@ async def parse_pdf(
         pages=pages,
         outline=extract_outline(raw),
     )
+
+
+@app.post("/embed", response_model=EmbedResponse)
+async def embed(request: EmbedRequest) -> EmbedResponse:
+    """Embed texts with the local model. No rate limit, no token budget."""
+    if not request.texts:
+        return EmbedResponse(vectors=[], dims=EMBED_DIMS)
+    try:
+        vectors = await anyio.to_thread.run_sync(
+            lambda: embed_texts(request.texts, request.task)
+        )
+    except Exception as exc:  # noqa: BLE001 - surface load/inference failures to the caller
+        raise HTTPException(status_code=500, detail=f"Local embedding failed: {exc}") from exc
+    return EmbedResponse(vectors=vectors, dims=EMBED_DIMS)
 
 
 @app.post("/chunk", response_model=ChunkResponse)
