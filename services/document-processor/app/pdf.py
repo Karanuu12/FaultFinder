@@ -1,6 +1,7 @@
 """PDF → text + page/section metadata + embedded image extraction."""
 from __future__ import annotations
 
+import base64
 import io
 from pathlib import Path
 from typing import Any
@@ -66,8 +67,6 @@ def _extract_images(page: pymupdf.Page, page_number: int) -> list[str]:
     decode cost only to be thrown away; on a 300+ page manual with a header
     logo on each page that's hundreds of wasted decodes per ingest.
     """
-    import base64
-
     image_list = page.get_images(full=True)
     candidates: list[tuple[int, int]] = []  # (xref, area) -- cheap pre-filter
 
@@ -113,7 +112,163 @@ def _extract_images(page: pymupdf.Page, page_number: int) -> list[str]:
     for _, img_bytes in extracted[:3]:
         b64 = base64.b64encode(img_bytes).decode("ascii")
         result.append(f"data:image/jpeg;base64,{b64}")
+
+    # Fallback: technical wiring/terminal diagrams in these manuals are very
+    # often drawn with PDF vector primitives (lines, rects, filled shapes) --
+    # a "screenshot" of the drawing, not an embedded JPEG/PNG. get_images()
+    # cannot see those at all, so a page can have a real, important diagram
+    # and still legitimately return zero embedded images. When that happens,
+    # look for a page region with dense vector drawing and rasterize just
+    # that region as an image instead.
+    if len(result) < 3:
+        result.extend(_rasterize_vector_diagram(page, slots=3 - len(result)))
+
     return result
+
+
+# A page's drawing operations are grouped by spatial proximity before any
+# other check runs. Unioning ALL of a page's vector drawings into one bbox
+# (the first version of this) means a header rule, a CAUTION box border, a
+# sidebar tab, and an actual diagram all merge into one "region" spanning
+# nearly the whole page -- which both fails to isolate the real diagram and
+# dilutes the text-density check below (a table's dense text gets diluted by
+# all the surrounding blank page space pulled into the same bbox). Clustering
+# first, then scoring each cluster on its own, is what makes both checks mean
+# anything.
+CLUSTER_GAP = 12  # points; drawings within this distance join the same cluster
+MIN_CLUSTER_OPS = 20  # below this, it's a box border or a couple of rules
+MIN_DIAGRAM_SIZE = 60  # points, each dimension -- rejects tiny decorative marks
+MAX_WORD_DENSITY = 7.0  # distinct words per sq-inch inside the cluster; tables run denser
+MIN_OPS_DENSITY = 4.0  # drawing primitives per sq-inch -- the real discriminator.
+# Page furniture (separator rules, language tabs, a table's row/column lines)
+# tends to be a handful of primitives spread across a LARGE area -- a cover
+# page's rules-plus-tabs cluster measured 1.7 ops/sqin, a dense parameter
+# table 0.9-2.4. An actual wiring diagram packs many primitives into a
+# comparatively small area: a real terminal wiring schematic measured
+# 6.8 ops/sqin. Word density alone isn't enough -- a labelled schematic (many
+# short terminal names: L1, L2, R1A, LI1...) can score similarly to a sparse
+# table on word density alone, which is why both checks apply together.
+
+
+def _cluster_drawings(rects: list["pymupdf.Rect"]) -> list[dict[str, Any]]:
+    """Group drawing-primitive rects into spatial clusters (simple agglomerative merge)."""
+    clusters: list[dict[str, Any]] = []
+    for r in rects:
+        expanded = pymupdf.Rect(r.x0 - CLUSTER_GAP, r.y0 - CLUSTER_GAP, r.x1 + CLUSTER_GAP, r.y1 + CLUSTER_GAP)
+        hit = next((c for c in clusters if expanded.intersects(c["bbox"])), None)
+        if hit:
+            hit["bbox"] |= r
+            hit["count"] += 1
+        else:
+            clusters.append({"bbox": pymupdf.Rect(r), "count": 1})
+
+    # A first merge pass can leave adjacent clusters now touching each other;
+    # repeat until stable. Bounded by len(clusters) which is already small.
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                a, b = clusters[i], clusters[j]
+                expanded = pymupdf.Rect(
+                    a["bbox"].x0 - CLUSTER_GAP, a["bbox"].y0 - CLUSTER_GAP,
+                    a["bbox"].x1 + CLUSTER_GAP, a["bbox"].y1 + CLUSTER_GAP,
+                )
+                if expanded.intersects(b["bbox"]):
+                    a["bbox"] |= b["bbox"]
+                    a["count"] += b["count"]
+                    clusters.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
+    return clusters
+
+
+def _rasterize_vector_diagram(page: pymupdf.Page, slots: int) -> list[str]:
+    """Detect a vector-drawn diagram on the page and render just that region.
+
+    Distinguishing "a wiring diagram" from "a bordered table" (which also
+    uses straight vector rule lines) matters: rasterizing every ruled table
+    would duplicate what the markdown table extractor already does better,
+    and rasterizing page furniture (rules, boxes, sidebar tabs) is just
+    noise. Real diagrams cluster densely (many line/shape primitives close
+    together) and are text-sparse (a few short labels, not sentences); a
+    table clusters just as densely but is text-dense.
+    """
+    if slots <= 0:
+        return []
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return []
+
+    rects = [d["rect"] for d in drawings if d.get("rect") and not d["rect"].is_empty]
+    if len(rects) < MIN_CLUSTER_OPS:
+        return []
+
+    clusters = _cluster_drawings(rects)
+    # Evaluate candidates largest-op-count first; use the first one that
+    # survives the size + text-density checks rather than always taking #1,
+    # so a big dense table cluster doesn't block a smaller real diagram
+    # elsewhere on the same page.
+    clusters.sort(key=lambda c: -c["count"])
+
+    page_rect = page.rect
+    for c in clusters[:5]:
+        if c["count"] < MIN_CLUSTER_OPS:
+            break  # sorted descending -- nothing after this qualifies either
+
+        pad = 6
+        bbox = pymupdf.Rect(c["bbox"].x0 - pad, c["bbox"].y0 - pad, c["bbox"].x1 + pad, c["bbox"].y1 + pad)
+        bbox.x0 = max(bbox.x0, page_rect.x0)
+        bbox.y0 = max(bbox.y0, page_rect.y0)
+        bbox.x1 = min(bbox.x1, page_rect.x1)
+        bbox.y1 = min(bbox.y1, page_rect.y1)
+
+        if bbox.width < MIN_DIAGRAM_SIZE or bbox.height < MIN_DIAGRAM_SIZE:
+            continue
+        # A cluster spanning nearly the full page is page furniture (a full
+        # frame/rule), not a contained diagram -- skip it, don't rasterize
+        # the whole page as a fallback.
+        if bbox.width > 0.92 * page_rect.width and bbox.height > 0.92 * page_rect.height:
+            continue
+
+        sq_inches = max(0.01, (bbox.width / 72) * (bbox.height / 72))
+
+        # Positive signal: a real diagram packs many drawing primitives into
+        # a comparatively small area. Page furniture (separator rules, a
+        # table's row/column lines) is a handful of primitives spread across
+        # a much larger area, even though the raw op COUNT can look similar.
+        if c["count"] / sq_inches < MIN_OPS_DENSITY:
+            continue
+
+        try:
+            # Word COUNT, not character count: a table cell holding "10" or
+            # "HSP" is short, so raw character density stays low even though
+            # the region is packed with distinct data points. Word density
+            # catches that; a real diagram has only a handful of scattered
+            # labels no matter how it's measured.
+            words_in_region = page.get_text("words", clip=bbox) or []
+        except Exception:
+            words_in_region = []
+        if len(words_in_region) / sq_inches > MAX_WORD_DENSITY:
+            continue  # word-dense -- a table or a text block, not a diagram
+
+        try:
+            pix = page.get_pixmap(clip=bbox, dpi=150)  # type: ignore[call-arg]
+            img_bytes = pix.tobytes("jpeg", jpg_quality=75)
+            if len(img_bytes) > MAX_IMAGE_SIZE:
+                pix = page.get_pixmap(clip=bbox, dpi=100)  # type: ignore[call-arg]
+                img_bytes = pix.tobytes("jpeg", jpg_quality=65)
+            if len(img_bytes) > MAX_IMAGE_SIZE:
+                continue
+            b64 = base64.b64encode(img_bytes).decode("ascii")
+            return [f"data:image/jpeg;base64,{b64}"][:slots]
+        except Exception:
+            continue
+
+    return []
 
 
 def _extract_pypdf(raw: bytes) -> list[dict[str, Any]]:

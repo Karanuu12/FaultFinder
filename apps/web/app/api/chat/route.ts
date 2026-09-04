@@ -198,7 +198,10 @@ async function answerWithGroq(message: string, hits: ScoredChunk[], apiKey: stri
             "the question, say so in refusals rather than guessing. Some sources are figures or " +
             "diagrams, marked with a leading [Figure] line — include one of those in used_sources " +
             "whenever it is the diagram, drawing, wiring layout, or dimension illustration the question " +
-            "is actually asking about, not just because it appeared in the context. Output JSON only.",
+            "is actually asking about, not just because it appeared in the context. The actual image is " +
+            "rendered separately below your answer whenever you cite a [Figure] source — never say the " +
+            "drawing 'cannot be shown' or that you lack the actual image; instead describe what it shows " +
+            "and let the rendered figure speak for itself. Output JSON only.",
         },
         {
           role: "user",
