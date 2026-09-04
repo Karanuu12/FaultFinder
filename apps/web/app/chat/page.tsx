@@ -282,11 +282,63 @@ export default function ChatPage() {
    * so 60-95% is a slow simulated tick while waiting -- honest about being
    * two different kinds of progress, not a fake full-request bar.
    */
-  const handleUpload = (file: File) => {
+  const handleUpload = async (file: File) => {
     setUploadPct(0);
     setUpload({ state: "busy", message: `Uploading ${file.name}…` });
     const body = new FormData();
     body.set("file", file);
+
+    // A dev-server reconnect (HMR), a proxy, or just a very long request can
+    // drop the CLIENT's connection while the SERVER keeps working and
+    // finishes the ingest anyway -- the exact "stuck at 95%, fine on reload"
+    // report. `settled` makes whichever path resolves first (the XHR
+    // response, or this poll noticing the document appear) win once, and
+    // the poll is what makes the UI self-heal without a manual reload.
+    let settled = false;
+    const before = new Set((stats?.documents_list ?? []).map((d) => d.document_id));
+    const finish = (ok: boolean, message: string) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(tick);
+      clearInterval(poll);
+      clearTimeout(giveUp);
+      if (ok) setUploadPct(100);
+      setUpload({ state: ok ? "done" : "error", message });
+      if (ok) refreshStats();
+    };
+
+    let pct = 0;
+    const tick = setInterval(() => {
+      pct = Math.min(95, pct + 1);
+      setUploadPct(pct);
+    }, 1500);
+
+    // Poll every 5s for a NEW document title matching this file -- catches
+    // the case where the server finished but this tab never got told.
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch("/api/stats");
+        if (!res.ok) return;
+        const data = await res.json();
+        const found = (data.documents_list ?? []).find(
+          (d: { document_id: string; title: string }) =>
+            !before.has(d.document_id) && d.title === file.name,
+        );
+        if (found) {
+          setStats(data);
+          finish(true, `Indexed ${found.title}: ${found.pages} pages, ${found.chunks} chunks, ${found.faults ?? 0} fault codes.`);
+        }
+      } catch {
+        /* poll failures are silent -- the XHR path or the next poll tick still covers it */
+      }
+    }, 5000);
+
+    // 12 min ceiling: past this, stop pretending and say so plainly instead
+    // of spinning forever.
+    const giveUp = setTimeout(
+      () => finish(false, "This upload is taking unusually long. Check the manuals list — it may have finished; if not, try again."),
+      12 * 60 * 1000,
+    );
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/ingest");
@@ -295,17 +347,11 @@ export default function ChatPage() {
       if (e.lengthComputable) setUploadPct(Math.min(60, Math.round((e.loaded / e.total) * 60)));
     };
     xhr.upload.onload = () => {
-      setUpload({ state: "busy", message: `Parsing and indexing ${file.name}… (large manuals take a minute)` });
-      let pct = 60;
-      const tick = setInterval(() => {
-        pct = Math.min(95, pct + 2);
-        setUploadPct(pct);
-      }, 800);
-      xhr.onloadend = () => clearInterval(tick);
+      pct = 60;
+      setUpload({ state: "busy", message: `Parsing and indexing ${file.name}… (large manuals take a few minutes)` });
     };
 
     xhr.onload = () => {
-      setUploadPct(100);
       let data: Record<string, unknown> = {};
       try {
         data = JSON.parse(xhr.responseText);
@@ -313,19 +359,20 @@ export default function ChatPage() {
         /* fall through to generic error below */
       }
       if (xhr.status < 200 || xhr.status >= 300) {
-        setUpload({ state: "error", message: (data.error as string) ?? `Upload failed (${xhr.status})` });
+        finish(false, (data.error as string) ?? `Upload failed (${xhr.status})`);
         return;
       }
       const lowText = Array.isArray(data.low_text_pages) ? (data.low_text_pages as number[]) : [];
       const warn = lowText.length ? ` ${lowText.length} page(s) had little/no extractable text (scanned?).` : "";
-      setUpload({
-        state: "done",
-        message: `Indexed ${data.title}: ${data.pages} pages, ${data.chunks} chunks, ${data.faults} fault codes.${warn}`,
-      });
-      refreshStats();
+      finish(true, `Indexed ${data.title}: ${data.pages} pages, ${data.chunks} chunks, ${data.faults} fault codes.${warn}`);
     };
 
-    xhr.onerror = () => setUpload({ state: "error", message: "Network error during upload" });
+    xhr.onerror = () => {
+      // A dropped connection is exactly what the poll is for -- don't
+      // declare failure yet, let it keep checking rather than show a false
+      // error for an upload that's actually still finishing server-side.
+      setUpload({ state: "busy", message: `Connection interrupted — still checking on ${file.name}…` });
+    };
     xhr.send(body);
   };
 
