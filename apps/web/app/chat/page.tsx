@@ -1,20 +1,24 @@
 "use client";
 
 import React, { useRef, useState } from "react";
-
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   ArrowUp,
   Bot,
-  CircleAlert,
-  FileText,
   Loader2,
-  Search,
   Upload,
   User,
-  Wrench,
-  Files,
+  File,
+  Menu,
+  X,
+  BookOpen,
+  Database,
+  Layers,
+  Hash,
+  Plus,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
 } from "lucide-react";
 
 interface Citation {
@@ -23,12 +27,10 @@ interface Citation {
   page: number;
   section: string;
 }
-
 interface AnswerStep {
   step: number;
   action: string;
 }
-
 interface CitedAnswer {
   error_code?: string;
   meaning: string;
@@ -39,206 +41,186 @@ interface CitedAnswer {
   confidence: "high" | "medium" | "low";
   refusals: string[];
 }
-
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   structured?: CitedAnswer;
 }
-
-function MessageBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === "user";
-  const a = message.structured;
-
-  return (
-    <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "")}>
-      <div
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-full text-sm",
-          isUser
-            ? "bg-neutral-900 text-white"
-            : "bg-emerald-100 text-emerald-700",
-        )}
-      >
-        {isUser ? <User className="size-4" /> : <Bot className="size-4" />}
-      </div>
-
-      <div
-        className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-          isUser
-            ? "rounded-br-sm bg-neutral-900 text-white"
-            : "rounded-bl-sm border border-neutral-200/70 bg-white text-neutral-800",
-        )}
-      >
-        {/* Plain text fallback */}
-        {!a && <p className="whitespace-pre-wrap">{message.content}</p>}
-
-        {/* Structured answer */}
-        {a && (
-          <div className="space-y-4">
-            {/* Refusal */}
-            {a.refusals.length > 0 && (
-              <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-amber-800">
-                <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
-                <div>
-                  {a.refusals.map((r, i) => (
-                    <p key={i} className="text-sm font-medium">
-                      {r}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {a.error_code && (
-              <div>
-                <span className="inline-block rounded-full bg-neutral-100 px-3 py-1 font-mono text-xs font-bold text-neutral-700">
-                  {a.error_code}
-                </span>
-              </div>
-            )}
-
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                Meaning
-              </p>
-              <p className="mt-1 font-medium">{a.meaning}</p>
-            </div>
-
-            {a.probable_causes.length > 0 && (
-              <div>
-                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                  <Search className="size-3" /> Probable Causes
-                </div>
-                <ul className="mt-1.5 list-inside list-disc space-y-1 text-sm text-neutral-700">
-                  {a.probable_causes.map((c, i) => (
-                    <li key={i}>{c}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {a.corrective_action.length > 0 && (
-              <div>
-                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                  <Wrench className="size-3" /> Corrective Action
-                </div>
-                <ol className="mt-1.5 list-inside list-decimal space-y-1 text-sm text-neutral-700">
-                  {a.corrective_action.map((s) => (
-                    <li key={s.step}>{s.action}</li>
-                  ))}
-                </ol>
-              </div>
-            )}
-
-            {/* Citations */}
-            {a.citations.length > 0 && (
-              <div className="border-t border-neutral-100 pt-3">
-                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                  <FileText className="size-3" /> Sources
-                </div>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {a.citations.map((c, i) => (
-                    <span
-                      key={i}
-                      className="inline-block rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-medium text-neutral-600"
-                      title={c.document_id}
-                    >
-                      {c.title} · p{c.page}
-                      {c.section ? ` · ${c.section.slice(0, 30)}` : ""}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Images from the source page */}
-            {a.images && a.images.length > 0 && (
-              <div className="border-t border-neutral-100 pt-3">
-                <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                  Diagrams
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {a.images.slice(0, 4).map((img, i) => (
-                    <img
-                      key={i}
-                      src={img}
-                      alt={`Diagram from source page`}
-                      className="rounded-lg border border-neutral-200 object-contain"
-                      style={{ maxHeight: 200 }}
-                      loading="lazy"
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Confidence badge */}
-            <div className="flex items-center gap-2 text-[10px] font-medium text-neutral-400">
-              <span
-                className={cn(
-                  "inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                  a.confidence === "high"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : a.confidence === "medium"
-                      ? "bg-amber-100 text-amber-700"
-                      : "bg-red-100 text-red-700",
-                )}
-              >
-                {a.confidence} confidence
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SuggestedQueries({ onSelect }: { onSelect: (q: string) => void }) {
-  const suggestions = [
-    "E101 on the injection molding machine",
-    "Why is the press overheating?",
-    "E204 on the Press-2000",
-    "What does E101 mean?",
-  ];
-  return (
-    <div className="flex flex-wrap items-center justify-center gap-2 px-4">
-      <span className="text-xs font-medium text-neutral-400">Try:</span>
-      {suggestions.map((q) => (
-        <button
-          key={q}
-          onClick={() => onSelect(q)}
-          className="cursor-pointer rounded-full border border-neutral-200 bg-white/80 px-3 py-1 text-xs font-medium text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-700"
-        >
-          {q}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 interface IndexStats {
   documents: number;
   chunks: number;
   faults: number;
   dims: number;
   machines: string[];
-  documents_list?: { document_id: string; title: string; model?: string; pages: number }[];
+  documents_list?: {
+    document_id: string;
+    title: string;
+    model?: string;
+    pages: number;
+    chunks?: number;
+    faults?: number;
+  }[];
 }
+
+const CONFIDENCE_STYLE: Record<CitedAnswer["confidence"], string> = {
+  high: "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100",
+  medium: "bg-amber-50 text-amber-600 ring-1 ring-amber-100",
+  low: "bg-red-50 text-red-600 ring-1 ring-red-100",
+};
+
+function MessageBubble({ message }: { message: ChatMessage }) {
+  const isUser = message.role === "user";
+  const a = message.structured;
+
+  return (
+    <div className={cn("flex items-start gap-3", isUser ? "flex-row-reverse" : "")}>
+      <div
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-xl text-sm",
+          isUser ? "bg-neutral-900 text-white" : "bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow-sm",
+        )}
+      >
+        {isUser ? <User className="size-4" /> : <Bot className="size-4" />}
+      </div>
+
+      {isUser ? (
+        <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-neutral-900 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm">
+          <p className="whitespace-pre-wrap">{message.content}</p>
+        </div>
+      ) : (
+        <div className="max-w-[75%] space-y-3">
+          {!a && (
+            <div className="rounded-2xl border border-neutral-200/70 bg-white px-5 py-3.5 text-sm leading-relaxed text-neutral-700 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_rgba(0,0,0,0.04)]">
+              <p className="whitespace-pre-wrap">{message.content}</p>
+            </div>
+          )}
+
+          {a && (
+            <div className="overflow-hidden rounded-2xl border border-neutral-200/70 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_rgba(0,0,0,0.04)]">
+              <div className="space-y-4 px-5 py-4">
+                {a.refusals.length > 0 && (
+                  <div className="flex items-start gap-2.5 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <div className="space-y-1">
+                      {a.refusals.map((r, i) => (
+                        <p key={i}>{r}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(a.error_code || a.meaning) && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {a.error_code && (
+                      <span className="rounded-full bg-neutral-100 px-3 py-1 font-mono text-xs font-semibold text-neutral-600">
+                        {a.error_code}
+                      </span>
+                    )}
+                    <span className={cn("rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", CONFIDENCE_STYLE[a.confidence])}>
+                      {a.confidence} confidence
+                    </span>
+                  </div>
+                )}
+
+                {a.meaning && (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Meaning</p>
+                    <p className="text-[15px] font-medium leading-relaxed text-neutral-900">{a.meaning}</p>
+                  </div>
+                )}
+
+                {a.probable_causes.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Probable Causes</p>
+                    <ul className="space-y-1.5">
+                      {a.probable_causes.map((c, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm text-neutral-600">
+                          <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-neutral-300" />
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {a.corrective_action.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Corrective Action</p>
+                    <ol className="space-y-2">
+                      {a.corrective_action.map((s) => (
+                        <li key={s.step} className="flex items-start gap-2.5 text-sm text-neutral-600">
+                          <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[10px] font-semibold text-emerald-600">
+                            {s.step}
+                          </span>
+                          {s.action}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {a.citations.length > 0 && (
+                  <div className="space-y-2 border-t border-neutral-100 pt-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Sources</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {a.citations.map((c, i) => (
+                        <span
+                          key={i}
+                          title={c.section}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-neutral-50 px-2.5 py-1 text-[11px] font-medium text-neutral-500"
+                        >
+                          <File className="size-3" />
+                          {c.title} · p{c.page}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {a.images && a.images.length > 0 && (
+                  <div className="space-y-2 border-t border-neutral-100 pt-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">Diagrams</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {a.images.slice(0, 4).map((img, i) => (
+                        <img
+                          key={i}
+                          src={img}
+                          alt=""
+                          className="rounded-xl border border-neutral-200/80"
+                          style={{ maxHeight: 160 }}
+                          loading="lazy"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SUGGESTIONS = [
+  "E101 on the injection molding machine",
+  "Why is the press overheating?",
+  "E204 on the Press-2000",
+  "b005 on powerflex",
+];
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [stats, setStats] = useState<IndexStats | null>(null);
-  const [upload, setUpload] = useState<{
-    state: "idle" | "busy" | "done" | "error";
-    message: string;
-  }>({ state: "idle", message: "" });
-  const formRef = useRef<HTMLFormElement>(null);
+  const [upload, setUpload] = useState<{ state: "idle" | "busy" | "done" | "error"; message: string }>(
+    { state: "idle", message: "" },
+  );
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refreshStats = React.useCallback(async () => {
     try {
@@ -270,25 +252,15 @@ export default function ChatPage() {
       });
       refreshStats();
     } catch (err) {
-      setUpload({
-        state: "error",
-        message: err instanceof Error ? err.message : "Upload failed",
-      });
+      setUpload({ state: "error", message: err instanceof Error ? err.message : "Upload failed" });
     }
-  };
-
-  const scrollToBottom = () => {
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
   };
 
   const handleSubmit = async (text: string) => {
     if (!text.trim() || loading) return;
-
-    const userMsg: ChatMessage = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, { role: "user", content: text }]);
     setInput("");
     setLoading(true);
-
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -301,187 +273,264 @@ export default function ChatPage() {
           })),
         }),
       });
-
       if (!res.ok) {
         const err = await res.text();
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `Error (${res.status}): ${err.slice(0, 200)}`,
-          },
-        ]);
+        setMessages((prev) => [...prev, { role: "assistant", content: `Error (${res.status}): ${err.slice(0, 200)}` }]);
         return;
       }
-
       const data = await res.json();
       setMessages((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          content: data.answer.meaning || data.answer.refusals[0] || "",
-          structured: data.answer,
-        },
+        { role: "assistant", content: data.answer.meaning || data.answer.refusals?.[0] || "", structured: data.answer },
       ]);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          content: `Network error: ${err instanceof Error ? err.message : "Unknown"}`,
-        },
+        { role: "assistant", content: `Network error: ${err instanceof Error ? err.message : "Unknown"}` },
       ]);
     } finally {
       setLoading(false);
-      scrollToBottom();
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     }
   };
 
+  const documents = stats?.documents_list ?? [];
+  const hasManuals = (stats?.documents ?? 0) > 0;
+
+  const pipelineStats = [
+    { label: "Chunks", value: stats ? String(stats.chunks) : "—", icon: Layers },
+    { label: "Fault Codes", value: stats ? String(stats.faults) : "—", icon: Hash },
+    { label: "Vector Dims", value: stats?.dims ? String(stats.dims) : "—", icon: Database },
+    { label: "Embedder", value: "Jina v3", icon: Sparkles },
+  ];
+
   return (
-    <div className="flex min-h-svh flex-col bg-neutral-50 font-sans">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-3">
-        <div className="flex items-center gap-2">
-          <div className="flex size-7 items-center justify-center rounded-full bg-neutral-900 text-[10px] font-bold text-white">
-            T
-          </div>
-          <span className="text-sm font-semibold text-neutral-800">
-            FaultFinder
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] font-medium text-neutral-400">
-            RAG Troubleshooting
-          </span>
-          <label
-            className={cn(
-              "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors",
-              upload.state === "busy"
-                ? "cursor-wait border-neutral-200 bg-neutral-100 text-neutral-400"
-                : "cursor-pointer border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800",
-            )}
+    <div className="flex h-svh bg-neutral-50 font-sans">
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[2px] md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-neutral-200/70 bg-white transition-transform duration-200 md:relative md:z-0 md:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
+          <a href="/" className="flex items-center gap-2.5">
+            <div className="flex size-8 items-center justify-center rounded-xl bg-neutral-900 text-xs font-bold text-white">
+              F
+            </div>
+            <span className="text-sm font-semibold text-neutral-900">FaultFinder</span>
+          </a>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="flex size-7 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-100 md:hidden"
           >
-            {upload.state === "busy" ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Upload className="size-3.5" />
-            )}
-            {upload.state === "busy" ? "Indexing…" : "Upload PDF"}
-            <input
-              type="file"
-              accept="application/pdf,.pdf"
-              className="hidden"
-              disabled={upload.state === "busy"}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                // Reset so re-selecting the same file fires change again.
-                e.target.value = "";
-                if (file) handleUpload(file);
-              }}
-            />
-          </label>
+            <X className="size-4" />
+          </button>
         </div>
-      </header>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="mx-auto max-w-3xl space-y-5">
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-4 pt-20 text-center">
-              <div className="flex size-12 items-center justify-center rounded-2xl bg-emerald-100">
-                <Bot className="size-6 text-emerald-600" />
-              </div>
-              <h1 className="text-xl font-semibold text-neutral-800">
-                Ask FaultFinder
-              </h1>
-              <p className="max-w-md text-sm text-neutral-500">
-                Type an error code, a symptom, or a machine name. Get a cited
-                answer from the loaded manuals.
-              </p>
+        <div className="flex-1 space-y-5 overflow-y-auto px-4 py-5">
+          {/* Manuals */}
+          <div>
+            <div className="mb-3 flex items-center gap-2 px-1">
+              <BookOpen className="size-3.5 text-neutral-400" />
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Manuals</p>
+              <span className="ml-auto rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500">
+                {stats?.documents ?? 0}
+              </span>
+            </div>
 
-              {/* Live index stats — read from /api/stats, not hardcoded */}
-              <div className="mt-4 grid grid-cols-2 gap-3 w-full max-w-md">
-                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
-                  <div className="flex items-center gap-2">
-                    <Files className="size-4 text-neutral-400 shrink-0" />
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Manuals</p>
-                  </div>
-                  <p className="mt-1 text-lg font-bold text-neutral-900">{stats?.documents ?? "—"}</p>
-                  <p className="text-[10px] text-neutral-500">
-                    {stats?.documents_list?.length
-                      ? stats.documents_list.map((d) => d.model || d.title).join(", ")
-                      : "Upload a PDF manual to index it"}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Chunks Indexed</p>
-                  <p className="mt-0.5 text-lg font-bold text-neutral-900">{stats?.chunks ?? "—"}</p>
-                  <p className="text-[10px] text-neutral-500">Structure-aware, with page/section metadata</p>
-                </div>
-                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Fault Codes</p>
-                  <p className="mt-0.5 text-lg font-bold text-neutral-900">{stats?.faults ?? "—"}</p>
-                  <p className="text-[10px] text-neutral-500">Code → meaning → cause → corrective action</p>
-                </div>
-                <div className="rounded-xl border border-neutral-200 bg-white p-3 text-left">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Vector Dims</p>
-                  <p className="mt-0.5 text-lg font-bold text-neutral-900">{stats?.dims || "—"}</p>
-                  <p className="text-[10px] text-neutral-500">jina-embeddings-v3 (hosted, multilingual)</p>
-                </div>
-              </div>
-
-              {upload.state !== "idle" && (
-                <div
-                  className={cn(
-                    "mt-1 w-full max-w-md rounded-lg px-3 py-2 text-left text-xs",
-                    upload.state === "error"
-                      ? "bg-red-50 text-red-700"
-                      : upload.state === "done"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "bg-neutral-100 text-neutral-600",
-                  )}
-                >
-                  {upload.message}
-                </div>
+            <div className="space-y-0.5">
+              {documents.length === 0 && (
+                <p className="px-3 py-2 text-[12px] text-neutral-400">No manuals indexed yet.</p>
               )}
-
-              <SuggestedQueries onSelect={handleSubmit} />
+              {documents.map((doc) => (
+                <div
+                  key={doc.document_id}
+                  className="flex items-center gap-3 rounded-xl px-3 py-2 transition hover:bg-neutral-50"
+                >
+                  <File className="size-4 shrink-0 text-neutral-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium text-neutral-800">{doc.model || doc.title}</p>
+                    <p className="text-[10px] text-neutral-400">
+                      {doc.pages}p · {doc.chunks ?? "—"}c{doc.faults ? ` · ${doc.faults} codes` : ""}
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
 
-          {messages.map((msg, i) => (
-            <MessageBubble key={i} message={msg} />
-          ))}
+            <label
+              className={cn(
+                "mt-2 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed px-3 py-2.5 text-[12px] font-medium transition",
+                upload.state === "busy"
+                  ? "cursor-wait border-neutral-200 bg-neutral-50 text-neutral-400"
+                  : "border-neutral-300 text-neutral-500 hover:border-emerald-300 hover:bg-emerald-50/50 hover:text-emerald-700",
+              )}
+            >
+              {upload.state === "busy" ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+              {upload.state === "busy" ? "Indexing…" : "Upload PDF manual"}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                disabled={upload.state === "busy"}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) handleUpload(file);
+                }}
+              />
+            </label>
 
-          {loading && (
-            <div className="flex items-center gap-3 text-sm text-neutral-400">
-              <Loader2 className="size-4 animate-spin" />
-              Searching manuals...
+            {upload.state !== "idle" && (
+              <div
+                className={cn(
+                  "mt-2 flex items-start gap-2 rounded-xl px-3 py-2 text-[11px] leading-snug",
+                  upload.state === "error"
+                    ? "bg-red-50 text-red-700"
+                    : upload.state === "done"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-neutral-100 text-neutral-600",
+                )}
+              >
+                {upload.state === "done" && <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />}
+                {upload.state === "error" && <AlertCircle className="mt-0.5 size-3.5 shrink-0" />}
+                {upload.state === "busy" && <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />}
+                <span>{upload.message}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Pipeline */}
+          <div className="border-t border-neutral-100 pt-4">
+            <div className="mb-3 flex items-center gap-2 px-1">
+              <Database className="size-3.5 text-neutral-400" />
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Pipeline</p>
             </div>
-          )}
-
-          <div ref={bottomRef} />
+            <div className="space-y-2">
+              {pipelineStats.map((s) => (
+                <div key={s.label} className="flex items-center gap-3 rounded-xl bg-neutral-50 px-3 py-2">
+                  <s.icon className="size-4 shrink-0 text-neutral-400" />
+                  <div className="flex w-full items-center justify-between">
+                    <p className="text-[10px] font-medium text-neutral-500">{s.label}</p>
+                    <p className="text-[12px] font-semibold text-neutral-800">{s.value}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      </aside>
 
-      {/* Input */}
-      <div className="border-t border-neutral-200 bg-white px-4 py-4">
-        <form
-          ref={formRef}
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSubmit(input);
-          }}
-          className="mx-auto flex max-w-3xl items-end gap-2"
-        >
-          <div className="relative flex-1">
+      {/* Main */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center justify-between border-b border-neutral-200/70 bg-white/80 px-5 py-3 backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="flex size-8 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-100 md:hidden"
+            >
+              <Menu className="size-4" />
+            </button>
+            <div className="flex size-8 items-center justify-center rounded-xl bg-neutral-900 text-xs font-bold text-white md:hidden">
+              F
+            </div>
+            <p className="text-sm font-semibold text-neutral-900">Ask FaultFinder</p>
+          </div>
+          <div className="hidden items-center gap-2 text-[11px] font-medium text-neutral-400 sm:flex">
+            <span className="size-1.5 rounded-full bg-emerald-500" />
+            {stats?.documents ?? 0} manuals · {stats?.chunks ?? 0} chunks indexed
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-8">
+          <div className="mx-auto max-w-3xl space-y-5">
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center pt-16 text-center">
+                <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-lg shadow-emerald-500/20">
+                  <Bot className="size-7 text-white" />
+                </div>
+                <h1 className="mt-5 text-2xl font-medium text-neutral-900">Ask FaultFinder</h1>
+                <p className="mt-1.5 max-w-sm text-sm text-neutral-400">
+                  Type an error code, a symptom, or a machine name. Get a cited answer from the correct manual.
+                </p>
+
+                {!hasManuals ? (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-8 flex items-center gap-2 rounded-full border border-dashed border-neutral-300 bg-white px-5 py-3 text-sm font-medium text-neutral-500 transition hover:border-emerald-300 hover:bg-emerald-50/50 hover:text-emerald-700"
+                  >
+                    <Upload className="size-4" />
+                    Upload a PDF manual to get started
+                  </button>
+                ) : (
+                  <>
+                    <div className="mt-8 grid w-full max-w-sm grid-cols-2 gap-3">
+                      {[
+                        { label: "Manuals", value: stats?.documents ?? 0, sub: "indexed" },
+                        { label: "Chunks", value: stats?.chunks ?? 0, sub: "structured" },
+                        { label: "Fault Codes", value: stats?.faults ?? 0, sub: "extracted" },
+                        { label: "Vector Dims", value: stats?.dims ?? 0, sub: "jina v3" },
+                      ].map((s) => (
+                        <div
+                          key={s.label}
+                          className="rounded-2xl border border-neutral-200/70 bg-white px-4 py-3.5 text-left shadow-sm"
+                        >
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">{s.label}</p>
+                          <p className="mt-0.5 text-xl font-bold text-neutral-900">{s.value}</p>
+                          <p className="text-[10px] text-neutral-400">{s.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-8 flex flex-wrap justify-center gap-2">
+                      <span className="text-xs font-medium text-neutral-400">Try:</span>
+                      {SUGGESTIONS.map((q) => (
+                        <button
+                          key={q}
+                          onClick={() => handleSubmit(q)}
+                          className="cursor-pointer rounded-full border border-neutral-200/80 bg-white px-3 py-1.5 text-xs font-medium text-neutral-500 transition hover:border-emerald-300 hover:text-emerald-700"
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {messages.map((msg, i) => (
+              <MessageBubble key={i} message={msg} />
+            ))}
+            {loading && (
+              <div className="flex items-center gap-2.5 rounded-2xl border border-neutral-200/70 bg-white px-5 py-3.5 text-sm text-neutral-500 shadow-sm">
+                <Loader2 className="size-4 animate-spin text-emerald-500" />
+                Searching manuals...
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+        </div>
+
+        <div className="border-t border-neutral-200/70 bg-white/90 px-5 py-4 backdrop-blur-sm">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSubmit(input);
+            }}
+            className="mx-auto flex max-w-3xl items-end gap-2"
+          >
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              // Implicit form submission does not fire for this input (the
-              // submit event never reaches the form), so Enter is wired
-              // explicitly. Without this, typing a query and pressing Enter
-              // silently does nothing and the send button looks dead.
+              // Implicit form submission doesn't reliably fire for this input,
+              // so Enter is wired explicitly — without this, typing a query
+              // and pressing Enter can silently do nothing.
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
@@ -490,21 +539,20 @@ export default function ChatPage() {
               }}
               placeholder="e.g. E101 on the injection molding machine"
               disabled={loading}
-              className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 pr-10 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100 disabled:opacity-50"
+              className="flex-1 rounded-2xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-900 placeholder:text-neutral-400 transition focus:border-emerald-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-100 disabled:opacity-50"
             />
-          </div>
-          <Button
-            type="submit"
-            disabled={!input.trim() || loading}
-            size="icon"
-            className="size-10 shrink-0 rounded-full bg-neutral-900 text-white hover:bg-neutral-700 disabled:opacity-40"
-          >
-            <ArrowUp className="size-4" />
-          </Button>
-        </form>
-        <p className="mt-2 text-center text-[10px] text-neutral-400">
-          Answers are sourced from loaded manuals. Verify before acting.
-        </p>
+            <button
+              type="submit"
+              disabled={!input.trim() || loading}
+              className="flex size-10 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-white shadow-sm transition hover:bg-neutral-700 disabled:opacity-40"
+            >
+              <ArrowUp className="size-4" />
+            </button>
+          </form>
+          <p className="mt-2 text-center text-[10px] text-neutral-400">
+            Answers are sourced from loaded manuals. Verify before acting.
+          </p>
+        </div>
       </div>
     </div>
   );
