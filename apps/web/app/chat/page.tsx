@@ -18,6 +18,7 @@ import {
   Plus,
   CheckCircle2,
   AlertCircle,
+  Trash2,
   Sparkles,
 } from "lucide-react";
 
@@ -238,6 +239,7 @@ export default function ChatPage() {
   const [upload, setUpload] = useState<{ state: "idle" | "busy" | "done" | "error"; message: string }>(
     { state: "idle", message: "" },
   );
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -253,6 +255,24 @@ export default function ChatPage() {
   React.useEffect(() => {
     refreshStats();
   }, [refreshStats]);
+
+  const handleDelete = async (documentId: string, label: string) => {
+    if (!confirm(`Delete "${label}"? This removes it from the index; re-upload to add it back.`)) return;
+    setDeletingId(documentId);
+    try {
+      const res = await fetch(`/api/documents?id=${encodeURIComponent(documentId)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUpload({ state: "error", message: data.error ?? `Delete failed (${res.status})` });
+        return;
+      }
+      refreshStats();
+    } catch (err) {
+      setUpload({ state: "error", message: err instanceof Error ? err.message : "Delete failed" });
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handleUpload = async (file: File) => {
     setUpload({ state: "busy", message: `Parsing and indexing ${file.name}…` });
@@ -378,6 +398,18 @@ export default function ChatPage() {
                       {doc.pages}p · {doc.chunks ?? "—"}c{doc.faults ? ` · ${doc.faults} codes` : ""}
                     </p>
                   </div>
+                  <button
+                    onClick={() => handleDelete(doc.document_id, doc.model || doc.title)}
+                    disabled={deletingId === doc.document_id}
+                    title="Delete manual"
+                    className="flex size-6 shrink-0 items-center justify-center rounded-lg text-neutral-300 transition hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
+                  >
+                    {deletingId === doc.document_id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )}
+                  </button>
                 </div>
               ))}
             </div>
