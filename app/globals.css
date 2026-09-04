@@ -1,8 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Instrument+Serif:ital@0;1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Special+Gothic+Expanded+One&family=Syne:wght@400..800&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
+
+@font-face {
+  font-family: "gothic";
+  src: url("/fonts/SpecialGothicExpandedOne-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "poppins";
+  src: url("/fonts/Poppins-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "instrumental";
+  src: url("/fonts/InstrumentSerif-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+@theme {
+  --font-gothic: "gothic", sans-serif;
+  --font-syne: "Syne", sans-serif;
+  --font-poppins: "Poppins", sans-serif;
+  --font-instrumental: "Instrument Serif", serif;
+  --font-instrument-sans: "Inter", sans-serif;
+  --font-inter: "Inter", sans-serif;
+}
+
+/* hide scroll bar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE + Edge */
+  scrollbar-width: none;     /* Firefox */
+}
 
 :root {
     --background: oklch(1 0 0);
@@ -119,14 +157,54 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+  }
   body {
     @apply bg-background text-foreground;
-    }
+  }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
-    }
+  }
   html {
     @apply font-sans;
-    }
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(250, 204, 21, 0.4);
+    box-shadow: 0 0 10px rgba(250, 204, 21, 0.4);
+  }
+
+  50% {
+    box-shadow: 0 0 13px rgba(250, 204, 21, 1);
+    box-shadow: 0 0 13px rgba(250, 204, 21, 1);
+  }
+}
+
+@keyframes silverGlow {
+  0%, 100% {
+    box-shadow:
+      0 0 5px rgba(212,212,216,0.15),
+      0 0 10px rgba(212,212,216,0.05);
+  }
+
+  50% {
+    box-shadow:
+      0 0 15px rgba(212,212,216,0.35),
+      0 0 10px rgba(212,212,216,0.15);
+  }
+}
+
+@keyframes bronzeGlow {
+  0%, 100% {
+    box-shadow:
+      0 0 5px rgba(251,146,60,0.15),
+      0 0 10px rgba(251,146,60,0.05);
+  }
+
+  50% {
+    box-shadow:
+      0 0 15px rgba(251,146,60,0.35),
+      0 0 10px rgba(251,146,60,0.15);
+  }
 }
