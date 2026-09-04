@@ -18,6 +18,43 @@ import { z } from "zod";
 
 const JINA_URL = "https://api.jina.ai/v1/embeddings";
 
+/**
+ * Sliding-window token budget. Concurrency alone caused this: 4 batches x 64
+ * chunks x ~400 tokens fire almost simultaneously (~100k+ tokens in one
+ * instant), which blows a per-MINUTE token limit even though each request is
+ * well-formed and none of them individually looks large. Workers must ask
+ * before sending, not just be capped in count.
+ */
+class TokenRateLimiter {
+  private readonly windowMs = 60_000;
+  private log: { t: number; tokens: number }[] = [];
+
+  constructor(private readonly limitPerMinute: number) {}
+
+  private used(now: number): number {
+    this.log = this.log.filter((e) => now - e.t < this.windowMs);
+    return this.log.reduce((s, e) => s + e.tokens, 0);
+  }
+
+  async acquire(tokens: number): Promise<void> {
+    for (;;) {
+      const now = Date.now();
+      if (this.used(now) + tokens <= this.limitPerMinute) {
+        this.log.push({ t: now, tokens });
+        return;
+      }
+      const oldest = this.log[0];
+      const wait = oldest ? this.windowMs - (now - oldest.t) + 100 : 1000;
+      await new Promise((r) => setTimeout(r, Math.min(Math.max(wait, 200), 5000)));
+    }
+  }
+}
+
+/** ~4 chars/token for English technical text -- same ratio the chunker uses for consistency. */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.6);
+}
+
 const RESPONSE = z.object({
   data: z.array(z.object({ index: z.number(), embedding: z.array(z.number()) })),
   usage: z.object({ total_tokens: z.number() }).optional(),
@@ -32,6 +69,8 @@ export interface JinaConfig {
   batchSize?: number;
   /** Batches in flight at once. Independent HTTP calls, not related to dims/model. */
   concurrency?: number;
+  /** Free-tier default is 100k; kept below that so this client backs off before Jina 429s it. */
+  tokensPerMinute?: number;
   baseUrl?: string;
 }
 
@@ -44,6 +83,7 @@ export class JinaEmbeddingClient {
   private batchSize: number;
   private concurrency: number;
   private baseUrl: string;
+  private limiter: TokenRateLimiter;
 
   constructor(config: JinaConfig) {
     if (!config.apiKey) throw new Error("JINA_API_KEY is required for JinaEmbeddingClient");
@@ -53,6 +93,7 @@ export class JinaEmbeddingClient {
     this.batchSize = config.batchSize ?? 64;
     this.concurrency = config.concurrency ?? 4;
     this.baseUrl = config.baseUrl ?? JINA_URL;
+    this.limiter = new TokenRateLimiter(config.tokensPerMinute ?? 85_000);
   }
 
   get dims(): number {
@@ -101,6 +142,13 @@ export class JinaEmbeddingClient {
     const worker = async () => {
       while (nextChunk < chunks.length) {
         const { start, batch } = chunks[nextChunk++];
+        // Concurrency controls how many requests can be IN FLIGHT; the
+        // limiter controls how many TOKENS leave in a given minute -- the
+        // actual thing Jina's free tier caps. Without this, 4 concurrent
+        // batches can fire ~100k+ tokens in the same instant and 429
+        // immediately, no matter how well-behaved each individual request is.
+        const tokens = batch.reduce((s, t) => s + estimateTokens(t), 0);
+        await this.limiter.acquire(tokens);
         const vectors = await this.postWithRetry(batch, task);
         for (let j = 0; j < vectors.length; j++) out[start + j] = vectors[j];
         doneCount += batch.length;
