@@ -17,6 +17,7 @@ import { chunkBlocks } from "@timmo/rag/doc/chunker";
 import { extractFaultRecords } from "@timmo/rag/doc/faults";
 import type { PageInput, OutlineInput } from "@timmo/rag/doc/blocks";
 import { getStore, getEmbedder } from "@/lib/rag-index";
+import { setProgress } from "@/lib/ingest-progress";
 
 export const runtime = "nodejs";
 // A 170-page manual takes minutes to parse + embed; don't let the platform cut it off.
@@ -99,6 +100,7 @@ async function parseDocument(
 
 export async function POST(request: NextRequest) {
   const started = Date.now();
+  let jobIdForError = "";
   try {
     const form = await request.formData();
     const file = form.get("file");
@@ -113,8 +115,13 @@ export async function POST(request: NextRequest) {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const documentId =
       (form.get("document_id") as string) || file.name.replace(/\.pdf$/i, "").replace(/\s+/g, "-");
+    // Client-supplied id so the browser can poll real progress while this
+    // single long request is in flight.
+    const jobId = (form.get("job_id") as string) || "";
+    jobIdForError = jobId;
 
     // 1. Parse
+    setProgress(jobId, "parsing", 5, "Extracting text and diagrams…");
     const { title, pages, outline } = await parseDocument(file, documentId);
     if (!pages.length) {
       return Response.json({ error: "No extractable text found in the PDF." }, { status: 422 });
@@ -130,6 +137,7 @@ export async function POST(request: NextRequest) {
     const lowTextPages = pages.filter((p) => p.text.trim().length < 40).map((p) => p.page);
 
     // 3. Blocks → chunks → fault records
+    setProgress(jobId, "chunking", 20, `${pages.length} pages parsed`);
     const blocks = buildBlocks(pages, { documentId, outline });
     const chunks = chunkBlocks(blocks, {
       machineId: machine.id,
@@ -149,9 +157,16 @@ export async function POST(request: NextRequest) {
 
     // 4. Embed (batched — one request per 64 chunks, not one per chunk)
     const embedder = getEmbedder();
-    const vectors = await embedder.embedMany(chunks.map((c) => c.text));
+    setProgress(jobId, "embedding", 25, `0/${chunks.length} chunks embedded`);
+    const vectors = await embedder.embedMany(
+      chunks.map((c) => c.text),
+      // Real progress across the slowest phase by far -- 25% to 90%.
+      (done, total) =>
+        setProgress(jobId, "embedding", 25 + (done / total) * 65, `${done}/${total} chunks embedded`),
+    );
 
     // 5. Index
+    setProgress(jobId, "indexing", 92, "Writing to index…");
     const store = getStore();
     store.addDocument(
       {
@@ -169,6 +184,8 @@ export async function POST(request: NextRequest) {
       vectors,
       faults,
     );
+
+    setProgress(jobId, "done", 100, "Indexed");
 
     return Response.json({
       document_id: documentId,
@@ -189,6 +206,7 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error("/api/ingest error:", err);
     const message = err instanceof Error ? err.message : "Internal server error";
+    setProgress(jobIdForError, "error", 100, message.slice(0, 200));
     return Response.json({ error: message, elapsed_ms: Date.now() - started }, { status: 500 });
   }
 }

@@ -37,10 +37,16 @@ class TokenRateLimiter {
   }
 
   async acquire(tokens: number): Promise<void> {
+    // A single batch bigger than the entire per-minute budget can NEVER
+    // satisfy `used + tokens <= limit` -- waiting for it to fit is an
+    // infinite loop (an upload that hangs forever, never erroring). Clamp
+    // the reservation: let it through once the window is otherwise clear and
+    // let the 429 retry path handle it, rather than deadlock.
+    const request = Math.min(tokens, this.limitPerMinute);
     for (;;) {
       const now = Date.now();
-      if (this.used(now) + tokens <= this.limitPerMinute) {
-        this.log.push({ t: now, tokens });
+      if (this.used(now) + request <= this.limitPerMinute) {
+        this.log.push({ t: now, tokens: request });
         return;
       }
       const oldest = this.log[0];
@@ -48,6 +54,23 @@ class TokenRateLimiter {
       await new Promise((r) => setTimeout(r, Math.min(Math.max(wait, 200), 5000)));
     }
   }
+}
+
+/**
+ * The token budget is an ACCOUNT-wide limit, so the limiter has to be too.
+ * getEmbedder() builds a fresh client per request, so a per-instance limiter
+ * hands every concurrent upload (or upload + chat query) its own full budget
+ * -- two at once then legitimately exceed the real limit and 429, which is
+ * exactly the "two different files, same error" report.
+ */
+const sharedLimiters = new Map<number, TokenRateLimiter>();
+function limiterFor(limitPerMinute: number): TokenRateLimiter {
+  let limiter = sharedLimiters.get(limitPerMinute);
+  if (!limiter) {
+    limiter = new TokenRateLimiter(limitPerMinute);
+    sharedLimiters.set(limitPerMinute, limiter);
+  }
+  return limiter;
 }
 
 /** ~4 chars/token for English technical text -- same ratio the chunker uses for consistency. */
@@ -93,7 +116,7 @@ export class JinaEmbeddingClient {
     this.batchSize = config.batchSize ?? 64;
     this.concurrency = config.concurrency ?? 4;
     this.baseUrl = config.baseUrl ?? JINA_URL;
-    this.limiter = new TokenRateLimiter(config.tokensPerMinute ?? 85_000);
+    this.limiter = limiterFor(config.tokensPerMinute ?? 85_000);
   }
 
   get dims(): number {

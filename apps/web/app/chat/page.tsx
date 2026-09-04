@@ -307,11 +307,26 @@ export default function ChatPage() {
       if (ok) refreshStats();
     };
 
-    let pct = 0;
-    const tick = setInterval(() => {
-      pct = Math.min(95, pct + 1);
-      setUploadPct(pct);
-    }, 1500);
+    // Real server-side progress, polled -- replaces the simulated bar that
+    // ticked to 95% and parked there for however long the ingest actually
+    // took (73s on a 172-page manual), which reads as "stuck" when it isn't.
+    const jobId = crypto.randomUUID();
+    body.set("job_id", jobId);
+    let stageLabel = "Uploading";
+    const tick = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/ingest/progress?id=${jobId}`);
+        if (!r.ok) return;
+        const p = await r.json();
+        if (typeof p.pct === "number" && p.pct > 0) setUploadPct(p.pct);
+        if (p.stage && p.stage !== "unknown") {
+          stageLabel = p.stage === "embedding" ? "Embedding" : p.stage === "parsing" ? "Parsing" : p.stage === "chunking" ? "Chunking" : p.stage === "indexing" ? "Indexing" : stageLabel;
+          setUpload({ state: "busy", message: `${stageLabel} ${file.name}${p.detail ? ` — ${p.detail}` : ""}` });
+        }
+      } catch {
+        /* transient poll failure is fine; next tick retries */
+      }
+    }, 1000);
 
     // Poll every 5s for a NEW document title matching this file -- catches
     // the case where the server finished but this tab never got told.
@@ -343,12 +358,13 @@ export default function ChatPage() {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/ingest");
 
+    // Byte-transfer share of the bar is small on purpose: the upload is
+    // seconds, the server-side work is the rest.
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) setUploadPct(Math.min(60, Math.round((e.loaded / e.total) * 60)));
+      if (e.lengthComputable) setUploadPct(Math.min(5, Math.round((e.loaded / e.total) * 5)));
     };
     xhr.upload.onload = () => {
-      pct = 60;
-      setUpload({ state: "busy", message: `Parsing and indexing ${file.name}… (large manuals take a few minutes)` });
+      setUpload({ state: "busy", message: `Parsing ${file.name}…` });
     };
 
     xhr.onload = () => {
