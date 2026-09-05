@@ -20,6 +20,7 @@
 import { NextRequest } from "next/server";
 import { getStore, getEmbedder } from "@/lib/rag-index";
 import { getHallucinationSkill } from "@/lib/prompts/skill";
+import { startTrace, traceStep, endTrace } from "@/lib/query-progress";
 import type { ScoredChunk } from "@timmo/rag/store/local-store";
 import type { FaultRecord } from "@timmo/rag/doc/model";
 
@@ -260,17 +261,26 @@ function checkAmbiguity(records: FaultRecord[]): { ambiguous: boolean; question:
 }
 
 export async function POST(request: NextRequest) {
+  // Hoisted so the catch below can close the trace: the body is already
+  // consumed by then, so it cannot be re-read there.
+  let jobId: string | undefined;
   try {
     const body = await request.json();
     const { message, machine: explicitMachine } = body as { message?: string; machine?: string };
+    jobId = typeof body?.job_id === "string" ? body.job_id : undefined;
     const history = sanitizeHistory(body?.history);
 
     if (!message || typeof message !== "string" || !message.trim()) {
       return Response.json({ error: "message is required (string)" }, { status: 400 });
     }
 
+    // Trace is best-effort telemetry for the UI; every call is a no-op when
+    // the client didn't send a job_id, so the endpoint's contract is unchanged.
+    startTrace(jobId);
+
     const store = getStore();
     if (store.stats.chunks === 0) {
+      endTrace(jobId);
       return Response.json({
         answer: {
           meaning: "No manuals have been indexed yet.",
@@ -288,6 +298,16 @@ export async function POST(request: NextRequest) {
     const candidates = machineCandidates(store);
     const resolvedMachine = resolveMachineScope(message, history, explicitMachine, candidates);
     const messageCodes = message.match(CODE_RE) ?? [];
+    traceStep(
+      jobId,
+      "Read the question",
+      [
+        messageCodes.length ? `code ${messageCodes.join(", ")}` : "no explicit code",
+        resolvedMachine
+          ? `scoped to ${candidates.find((c) => c.machineId === resolvedMachine)?.label ?? resolvedMachine}`
+          : `${candidates.length} manual${candidates.length === 1 ? "" : "s"} in scope`,
+      ].join(" · "),
+    );
     // Only borrow a code from history when THIS message doesn't name one --
     // an explicit code in the current message always wins.
     const carriedCode = messageCodes.length ? undefined : lastCodeFromHistory(history);
@@ -300,7 +320,15 @@ export async function POST(request: NextRequest) {
       for (const code of messageCodes) {
         const records = store.faultsForCode(code);
         const { ambiguous, question } = checkAmbiguity(records);
+        traceStep(
+          jobId,
+          "Checked for the same code in other manuals",
+          ambiguous
+            ? `${code} documented differently in ${new Set(records.map((r) => r.machineId)).size} manuals — asking which`
+            : `${code}: ${records.length} record${records.length === 1 ? "" : "s"}, no conflict`,
+        );
         if (ambiguous) {
+          endTrace(jobId);
           return Response.json({
             answer: {
               error_code: code,
@@ -338,6 +366,12 @@ export async function POST(request: NextRequest) {
         : candidatesForCode;
       const record = scoped.length === 1 ? scoped[0] : undefined;
       if (record && isFastPathQuality(record)) {
+        traceStep(
+          jobId,
+          "Answered from the fault index",
+          `exact ${record.extraction} record — no embedding or generation needed`,
+        );
+        endTrace(jobId);
         return Response.json({
           answer: answerFromFaultRecord(record),
           sources: [],
@@ -359,13 +393,27 @@ export async function POST(request: NextRequest) {
     const embedder = getEmbedder();
     // ~0.5s of the ~0.8s query is this one round-trip; cache it.
     let queryVector = cachedQueryVector(retrievalQuery);
-    if (!queryVector) {
+    if (queryVector) {
+      traceStep(jobId, "Embedded the query", `cache hit — ${queryVector.length} dims, no API call`);
+    } else {
       queryVector = await embedder.embedQuery(retrievalQuery);
       putQueryVector(retrievalQuery, queryVector);
+      traceStep(jobId, "Embedded the query", `${queryVector.length} dims via Jina`);
     }
     const hits = store.search(queryVector, retrievalQuery, { topK: 8, machineId: resolvedMachine });
+    const retrievers = [...new Set(hits.flatMap((h) => h.matchedBy))];
+    traceStep(
+      jobId,
+      "Retrieved passages",
+      hits.length
+        ? `${hits.length} from ${new Set(hits.map((h) => h.title)).size} manual${
+            new Set(hits.map((h) => h.title)).size === 1 ? "" : "s"
+          } · matched by ${retrievers.join(" + ")}`
+        : "nothing matched",
+    );
 
     if (hits.length === 0) {
+      endTrace(jobId);
       return Response.json({
         answer: {
           meaning: "Nothing in the indexed manuals matches that question.",
@@ -386,6 +434,25 @@ export async function POST(request: NextRequest) {
     const answer = groqKey
       ? await answerWithGroq(message, hits, groqKey, history)
       : answerFromRetrieval(hits);
+    // Refusals are surfaced here too: an answer that fell back to raw retrieved
+    // text reports "0 steps", which on its own reads like the pipeline simply
+    // found nothing rather than like generation failing.
+    traceStep(
+      jobId,
+      "Composed the answer",
+      groqKey
+        ? [
+            `${answer.corrective_action.length} step${answer.corrective_action.length === 1 ? "" : "s"}`,
+            `${answer.citations.length} citation${answer.citations.length === 1 ? "" : "s"}`,
+            answer.refusals.length
+              ? `${answer.refusals.length} caveat${answer.refusals.length === 1 ? "" : "s"} — see the answer`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(", ")
+        : "no GROQ_API_KEY — returned the retrieved text verbatim",
+    );
+    endTrace(jobId);
 
     return Response.json({
       answer,
@@ -403,6 +470,10 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error("/api/chat error:", err);
     const message = err instanceof Error ? err.message : "Internal server error";
+    // Mark the trace finished even on failure, so the client's poll stops
+    // rather than hanging on a request that is never coming back.
+    traceStep(jobId, "Failed", message.slice(0, 160));
+    endTrace(jobId);
     return Response.json({ error: message }, { status: 500 });
   }
 }

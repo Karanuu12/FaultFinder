@@ -18,6 +18,7 @@ import {
   VolumeX,
   Mic,
   ArrowUpRight,
+  ChevronDown,
 } from "lucide-react";
 
 interface Citation {
@@ -40,10 +41,103 @@ interface CitedAnswer {
   confidence: "high" | "medium" | "low";
   refusals: string[];
 }
+interface QueryStep {
+  label: string;
+  detail?: string;
+  ms: number;
+}
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   structured?: CitedAnswer;
+  /** The pipeline stages that produced this answer, kept so it stays inspectable. */
+  trace?: QueryStep[];
+}
+
+/**
+ * The stages of a query, as they actually complete server-side.
+ *
+ * A chat request is one POST that can take several seconds, and a bare
+ * spinner says nothing -- you cannot tell a slow embedding call from a hung
+ * one. It also throws away the most reassuring thing this product knows: which
+ * manual it searched, how many passages came back, whether the fault index
+ * answered outright. Every line here is a real event with real numbers,
+ * reported after the work it names finished. Nothing is on a timer.
+ */
+function QueryTrace({
+  steps,
+  live,
+  open,
+  onToggle,
+}: {
+  steps: QueryStep[];
+  live: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const latest = steps[steps.length - 1];
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-neutral-50"
+      >
+        {live ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-neutral-400" />
+        ) : (
+          <CheckCircle2 className="size-3.5 shrink-0 text-[#359462]" />
+        )}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-600",
+            live && "shimmer",
+          )}
+        >
+          {live ? (latest?.label ?? "Searching the manuals…") : "How this was answered"}
+        </span>
+        {!live && steps.length > 0 && (
+          <span className="shrink-0 text-[11px] tabular-nums text-neutral-400">
+            {(steps[steps.length - 1].ms / 1000).toFixed(1)}s
+          </span>
+        )}
+        <ChevronDown
+          className={cn(
+            "size-3.5 shrink-0 text-neutral-400 transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      {open && steps.length > 0 && (
+        <ol className="space-y-2.5 border-t border-neutral-100 px-4 py-3">
+          {steps.map((s, i) => (
+            <li key={i} className="flex gap-2.5">
+              <span className="mt-[6px] size-1.5 shrink-0 rounded-full bg-neutral-300" />
+              <span className="min-w-0 flex-1">
+                <span className="text-[12.5px] font-medium text-neutral-700">{s.label}</span>
+                {s.detail && (
+                  <span className="block text-[11.5px] leading-[1.5] text-neutral-400">
+                    {s.detail}
+                  </span>
+                )}
+              </span>
+              <span className="shrink-0 pt-px text-[11px] tabular-nums text-neutral-300">
+                {s.ms < 1000 ? `${s.ms}ms` : `${(s.ms / 1000).toFixed(1)}s`}
+              </span>
+            </li>
+          ))}
+          {live && (
+            <li className="flex gap-2.5">
+              <span className="mt-[6px] size-1.5 shrink-0 animate-pulse rounded-full bg-neutral-400" />
+              <span className="shimmer text-[12.5px] font-medium text-neutral-500">Working…</span>
+            </li>
+          )}
+        </ol>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -81,44 +175,39 @@ interface IndexStats {
 }
 
 /**
- * The landing page's bento palette, quoted rather than reinvented: a very
- * light tinted ground, a slightly deeper border, and one saturated hue for the
- * heading. Using the same five families here is what makes the two pages read
- * as one product instead of two.
+ * Colour discipline, after getting this wrong in both directions:
  *
- * Each family is also assigned by MEANING, not rotation -- causes are always
- * amber, the fix is always green, diagrams violet, sources sky -- so the colour
- * is a wayfinding cue a technician can learn, not decoration.
+ * The landing page uses ONE tint per large card with a lot of white around it.
+ * Applying four tints INSIDE a single answer card was not "matching the
+ * landing page" -- it was the generic pastel-boxes look, and it made colour
+ * meaningless because everything had some.
+ *
+ * So: the card is white, hierarchy is typographic, and colour appears only
+ * where it is the fastest way to read a fact --
+ *
+ *   green  the fix is the fix (step numerals, upload success)
+ *   amber  caution: a refusal, or a claim we could not verify
+ *   sky    provenance, at chip scale only
+ *
+ * Everything else is neutral. One accent, in one place, meaning one thing.
  */
-const TONE = {
-  /** #7B35F0 — identity, the error code itself */
-  code: { bg: "bg-purple-100/70", border: "border-purple-300/50", ink: "text-[#5f24c4]" },
-  /** #c64e27 — diagnosis, "what might be wrong" */
-  causes: { bg: "bg-[#fff2df]", border: "border-[#f0d9b8]/80", ink: "text-[#c64e27]" },
-  /** #359462 — the fix, "what to do" */
-  action: { bg: "bg-[#eeffe8]", border: "border-[#cfe9c8]", ink: "text-[#2f7c53]" },
-  /** #5e2ac4 — figures pulled from the manual */
-  diagram: { bg: "bg-[#f2eeff]", border: "border-[#ddd0ff]/80", ink: "text-[#5e2ac4]" },
-  /** #0586d2 — provenance */
-  source: { bg: "bg-sky-100/50", border: "border-sky-200/70", ink: "text-[#0570b0]" },
+const ACCENT = {
+  green: "#359462",
+  amber: "#c64e27",
+  sky: "#0570b0",
 } as const;
 
-type ToneName = keyof typeof TONE;
-
-/**
- * Confidence is the one place colour carries a judgement rather than a
- * category, so it reuses the same hues at their most saturated.
- */
-const CONFIDENCE_STYLE: Record<CitedAnswer["confidence"], { dot: string; text: string; bg: string }> = {
-  high: { dot: "bg-[#359462]", text: "text-[#2f7c53]", bg: "bg-[#eeffe8]" },
-  medium: { dot: "bg-[#c98a2b]", text: "text-[#a8711f]", bg: "bg-[#fff2df]" },
-  low: { dot: "bg-[#c64e27]", text: "text-[#b04520]", bg: "bg-[#ffeee7]" },
+/** Confidence is a judgement, so it gets a dot -- not a filled badge. */
+const CONFIDENCE_STYLE: Record<CitedAnswer["confidence"], { dot: string; text: string }> = {
+  high: { dot: "bg-[#359462]", text: "text-[#2f7c53]" },
+  medium: { dot: "bg-[#c98a2b]", text: "text-[#96681c]" },
+  low: { dot: "bg-[#c64e27]", text: "text-[#a8401f]" },
 };
 
-/** Small-caps section label. One typographic device, tinted by section. */
-function SectionLabel({ tone, children }: { tone: ToneName; children: React.ReactNode }) {
+/** Small-caps section label. One typographic device, used consistently. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className={cn("text-[10px] font-semibold uppercase tracking-[0.14em]", TONE[tone].ink)}>
+    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
       {children}
     </p>
   );
@@ -162,7 +251,7 @@ function CitedText({ text, citations }: { text: string; citations: Citation[] })
         <sup
           key={`${m.index}-c`}
           title={`${citationLabel(cite.title)} — ${cite.section}`}
-          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-sky-100/70 px-1 py-px align-baseline text-[9.5px] font-semibold tabular-nums text-[#0570b0]"
+          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-neutral-100 px-1 py-px align-baseline text-[9.5px] font-semibold tabular-nums text-[#0570b0]"
         >
           p.{cite.page}
         </sup>
@@ -170,7 +259,7 @@ function CitedText({ text, citations }: { text: string; citations: Citation[] })
         <sup
           key={`${m.index}-c`}
           title="The model referenced a source that was not returned with this answer — treat this sentence as unverified."
-          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-[#fff2df] px-1 py-px align-baseline text-[9.5px] font-semibold text-[#c64e27]"
+          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-[#c64e27]/10 px-1 py-px align-baseline text-[9.5px] font-semibold text-[#a8401f]"
         >
           unverified
         </sup>
@@ -207,21 +296,14 @@ function Diagrams({ images }: { images: string[] }) {
   const anyUsable = candidates.some((_, i) => usable[i]);
 
   return (
-    <div
-      className={cn(
-        "space-y-3 rounded-2xl border p-4",
-        TONE.diagram.bg,
-        TONE.diagram.border,
-        !anyUsable && "hidden",
-      )}
-    >
-      <SectionLabel tone="diagram">Diagrams from the manual</SectionLabel>
+    <div className={cn("space-y-2.5", !anyUsable && "hidden")}>
+      <SectionLabel>Diagrams from the manual</SectionLabel>
       <div className="grid grid-cols-2 gap-2.5">
         {candidates.map((img, i) => (
           <div
             key={i}
             className={cn(
-              "overflow-hidden rounded-xl border border-[#ddd0ff]/70 bg-white p-1.5",
+              "overflow-hidden rounded-2xl border border-neutral-200/80 bg-neutral-50 p-1.5",
               !usable[i] && "hidden",
             )}
           >
@@ -337,28 +419,17 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
         {/* Header — code, confidence, listen. Everything identifying, one row. */}
         <div className="flex items-center gap-3 border-b border-neutral-100 px-5 py-3 sm:px-7">
           {a.error_code ? (
-            <span
-              className={cn(
-                "rounded-full border px-2.5 py-1 font-mono text-[12px] font-semibold tracking-[-0.01em]",
-                TONE.code.bg,
-                TONE.code.border,
-                TONE.code.ink,
-              )}
-            >
+            <span className="rounded-md bg-neutral-100 px-2 py-1 font-mono text-[12px] font-semibold tracking-[-0.01em] text-neutral-800">
               {a.error_code}
             </span>
           ) : (
             <span className="text-[13px] font-medium tracking-[-0.01em] text-neutral-950">Answer</span>
           )}
-          <span
-            className={cn(
-              "flex items-center gap-1.5 rounded-full px-2.5 py-1",
-              confidence.bg,
-              confidence.text,
-            )}
-          >
+          <span className="flex items-center gap-1.5">
             <span className={cn("size-1.5 rounded-full", confidence.dot)} />
-            <span className="text-[11px] font-semibold">{a.confidence} confidence</span>
+            <span className={cn("text-[11px] font-medium", confidence.text)}>
+              {a.confidence} confidence
+            </span>
           </span>
           <button
             onClick={() => speakText(spokenForm(a), index, (i) => setSpeaking(i === index))}
@@ -376,7 +447,7 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
 
         <div className="space-y-6 px-5 py-5 sm:px-7 sm:py-6">
           {a.refusals.length > 0 && (
-            <div className="flex items-start gap-2.5 rounded-2xl border border-[#f0d9b8]/80 bg-[#fff2df] px-4 py-3.5 text-[13px] leading-[1.55] text-[#8a5a1e]">
+            <div className="flex items-start gap-2.5 rounded-2xl border border-[#f0d9b8]/70 bg-[#fff8ef] px-4 py-3 text-[13px] leading-[1.55] text-[#8a5a1e]">
               <AlertCircle className="mt-px size-4 shrink-0" />
               <div className="space-y-1">
                 {a.refusals.map((r, i) => (
@@ -394,15 +465,15 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
           )}
 
           {a.probable_causes.length > 0 && (
-            <div className={cn("space-y-3 rounded-2xl border p-4", TONE.causes.bg, TONE.causes.border)}>
-              <SectionLabel tone="causes">Probable causes</SectionLabel>
-              <ul className="space-y-2">
+            <div className="space-y-2.5">
+              <SectionLabel>Probable causes</SectionLabel>
+              <ul className="space-y-1.5">
                 {a.probable_causes.map((c, i) => (
                   <li
                     key={i}
-                    className="flex items-start gap-2.5 text-[14px] leading-[1.55] text-[#7a5236]"
+                    className="flex items-start gap-2.5 text-[14px] leading-[1.55] text-[#6D6878]"
                   >
-                    <span className="mt-[8px] size-1.5 shrink-0 rounded-full bg-[#e0a15f]" />
+                    <span className="mt-[9px] size-1 shrink-0 rounded-full bg-neutral-300" />
                     <span>
                       <CitedText text={c} citations={a.citations} />
                     </span>
@@ -413,15 +484,18 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
           )}
 
           {a.corrective_action.length > 0 && (
-            <div className={cn("space-y-3 rounded-2xl border p-4", TONE.action.bg, TONE.action.border)}>
-              <SectionLabel tone="action">Corrective action</SectionLabel>
+            <div className="space-y-2.5">
+              <SectionLabel>Corrective action</SectionLabel>
+              {/* The one place green earns its keep: these are the steps that
+                  actually fix the machine, and the numerals should be findable
+                  when you glance back at the screen mid-repair. */}
               <ol className="space-y-2.5">
                 {a.corrective_action.map((s) => (
                   <li key={s.step} className="flex gap-3">
-                    <span className="mt-px flex size-[19px] shrink-0 items-center justify-center rounded-full bg-[#359462] text-[10px] font-bold tabular-nums text-white">
+                    <span className="mt-[3px] flex size-[17px] shrink-0 items-center justify-center rounded-full bg-[#359462]/10 text-[10px] font-bold tabular-nums text-[#2f7c53]">
                       {s.step}
                     </span>
-                    <span className="text-[14px] leading-[1.55] text-[#2c4a38]">
+                    <span className="text-[14px] leading-[1.55] text-[#3d3a49]">
                       <CitedText text={s.action} citations={a.citations} />
                     </span>
                   </li>
@@ -436,24 +510,18 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
         {/* Citations live in a footer band: always present, never competing
             with the answer for attention, always findable. */}
         {a.citations.length > 0 && (
-          <div
-            className={cn(
-              "flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t px-5 py-3.5 sm:px-7",
-              TONE.source.bg,
-              "border-sky-200/60",
-            )}
-          >
-            <SectionLabel tone="source">Sources</SectionLabel>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-neutral-100 bg-neutral-50/70 px-5 py-3 sm:px-7">
+            <SectionLabel>Sources</SectionLabel>
             {a.citations.map((c, i) => (
               <span
                 key={i}
                 title={c.section}
-                className="inline-flex items-center gap-1.5 rounded-full border border-sky-200/70 bg-white px-2.5 py-1 text-[11px] font-medium text-[#0570b0]"
+                className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white px-2.5 py-1 text-[11px] font-medium text-neutral-600"
               >
-                <FileText className="size-3 text-sky-400" />
+                <FileText className="size-3 text-neutral-400" />
                 {citationLabel(c.title)}
-                <span className="text-sky-300">·</span>
-                <span className="tabular-nums font-semibold">p.{c.page}</span>
+                <span className="text-neutral-300">·</span>
+                <span className="tabular-nums font-semibold text-[#0570b0]">p.{c.page}</span>
               </span>
             ))}
           </div>
@@ -470,7 +538,6 @@ const SUGGESTIONS = [
   "b005 on powerflex",
 ];
 
-const SUGGESTION_TONES: ToneName[] = ["code", "source", "action", "causes"];
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -485,6 +552,10 @@ export default function ChatPage() {
   const [uploadPct, setUploadPct] = useState(0);
   const [useOcr, setUseOcr] = useState(false);
   const [listening, setListening] = useState(false);
+  const [liveTrace, setLiveTrace] = useState<QueryStep[]>([]);
+  /** Which answers have their trace expanded, by message index. */
+  const [openTrace, setOpenTrace] = useState<Record<number, boolean>>({});
+  const [liveTraceOpen, setLiveTraceOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -666,27 +737,64 @@ export default function ChatPage() {
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setLoading(true);
+    setLiveTrace([]);
+
+    // The POST is one long request with no streaming, so stages are reported
+    // server-side against this id and polled here. 400ms is fast enough that
+    // a stage never feels stale, and cheap enough at ~8 polls per query.
+    const jobId = crypto.randomUUID();
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/chat/progress?id=${jobId}`);
+        if (!r.ok) return;
+        const t = await r.json();
+        if (Array.isArray(t.steps)) setLiveTrace(t.steps);
+      } catch {
+        /* a dropped poll is cosmetic — the next tick retries */
+      }
+    }, 400);
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
+          job_id: jobId,
           history: messages.map((m) => ({
             role: m.role,
             content: m.structured ? summarizeForHistory(m.structured) : m.content,
           })),
         }),
       });
+      // Grab the final trace before tearing the poll down, so a query that
+      // finished between ticks still shows its last stages.
+      clearInterval(poll);
+      let finalTrace: QueryStep[] = [];
+      try {
+        const t = await (await fetch(`/api/chat/progress?id=${jobId}`)).json();
+        if (Array.isArray(t.steps)) finalTrace = t.steps;
+      } catch {
+        /* no trace is fine — the answer is what matters */
+      }
+
       if (!res.ok) {
         const err = await res.text();
-        setMessages((prev) => [...prev, { role: "assistant", content: `Error (${res.status}): ${err.slice(0, 200)}` }]);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `Error (${res.status}): ${err.slice(0, 200)}`, trace: finalTrace },
+        ]);
         return;
       }
       const data = await res.json();
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: data.answer.meaning || data.answer.refusals?.[0] || "", structured: data.answer },
+        {
+          role: "assistant",
+          content: data.answer.meaning || data.answer.refusals?.[0] || "",
+          structured: data.answer,
+          trace: finalTrace,
+        },
       ]);
     } catch (err) {
       setMessages((prev) => [
@@ -694,7 +802,9 @@ export default function ChatPage() {
         { role: "assistant", content: `Network error: ${err instanceof Error ? err.message : "Unknown"}` },
       ]);
     } finally {
+      clearInterval(poll);
       setLoading(false);
+      setLiveTrace([]);
     }
   };
 
@@ -746,8 +856,8 @@ export default function ChatPage() {
           {/* Manuals */}
           <section>
             <div className="mb-2.5 flex items-baseline gap-2 px-1">
-              <SectionLabel tone="code">Manuals</SectionLabel>
-              <span className="ml-auto rounded-full bg-purple-100/70 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-[#5f24c4]">
+              <SectionLabel>Manuals</SectionLabel>
+              <span className="ml-auto text-[11px] font-medium tabular-nums text-neutral-400">
                 {stats?.documents ?? 0}
               </span>
             </div>
@@ -758,23 +868,12 @@ export default function ChatPage() {
                   Nothing indexed yet. Upload a PDF manual to begin.
                 </p>
               )}
-              {documents.map((doc, i) => {
-                const tone = SUGGESTION_TONES[i % SUGGESTION_TONES.length];
-                return (
+              {documents.map((doc) => (
                 <div
                   key={doc.document_id}
                   className="group flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-colors hover:bg-neutral-50"
                 >
-                  {/* Each manual keeps a stable colour so it stays recognisable
-                      here and wherever else it is listed. */}
-                  <div
-                    className={cn(
-                      "flex size-8 shrink-0 items-center justify-center rounded-[10px] border",
-                      TONE[tone].bg,
-                      TONE[tone].border,
-                      TONE[tone].ink,
-                    )}
-                  >
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-neutral-100 text-neutral-500">
                     <FileText className="size-3.5" />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -799,8 +898,7 @@ export default function ChatPage() {
                     )}
                   </button>
                 </div>
-                );
-              })}
+              ))}
             </div>
 
             <label
@@ -808,7 +906,7 @@ export default function ChatPage() {
                 "mt-2 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-2xl border border-dashed px-3 py-3 text-[12px] font-medium transition",
                 upload.state === "busy"
                   ? "cursor-wait border-neutral-200 bg-neutral-50 text-neutral-400"
-                  : "border-[#cfe9c8] bg-[#eeffe8]/60 text-[#2f7c53] hover:border-[#359462] hover:bg-[#eeffe8]",
+                  : "border-neutral-300 text-neutral-500 hover:border-neutral-950 hover:text-neutral-950",
               )}
             >
               {upload.state === "busy" ? (
@@ -847,7 +945,7 @@ export default function ChatPage() {
                 {upload.state === "busy" && (
                   <div className="h-1 w-full overflow-hidden rounded-full bg-neutral-200">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-[#0586d2] to-[#359462] transition-[width] duration-500 ease-out"
+                      className="h-full rounded-full bg-[#359462] transition-[width] duration-500 ease-out"
                       style={{ width: `${uploadPct}%` }}
                     />
                   </div>
@@ -856,10 +954,10 @@ export default function ChatPage() {
                   className={cn(
                     "flex items-start gap-2 rounded-2xl px-3 py-2.5 text-[11px] leading-[1.5]",
                     upload.state === "error"
-                      ? "bg-[#ffeee7] text-[#a8401f]"
+                      ? "bg-[#c64e27]/10 text-[#a8401f]"
                       : upload.state === "done"
-                        ? "bg-[#eeffe8] text-[#2f7c53]"
-                        : "bg-sky-100/60 text-[#0570b0]",
+                        ? "bg-[#359462]/10 text-[#2f7c53]"
+                        : "bg-neutral-100 text-neutral-600",
                   )}
                 >
                   {upload.state === "done" && <CheckCircle2 className="mt-px size-3.5 shrink-0" />}
@@ -877,19 +975,19 @@ export default function ChatPage() {
           {/* Pipeline — a definition list, not four boxes. */}
           <section>
             <div className="mb-2.5 px-1">
-              <SectionLabel tone="source">Pipeline</SectionLabel>
+              <SectionLabel>Pipeline</SectionLabel>
             </div>
-            <dl className="overflow-hidden rounded-2xl border border-sky-200/60 bg-sky-100/30">
+            <dl className="overflow-hidden rounded-2xl border border-neutral-200/70">
               {pipelineStats.map((s, i) => (
                 <div
                   key={s.label}
                   className={cn(
                     "flex items-center justify-between px-3.5 py-2.5",
-                    i > 0 && "border-t border-sky-200/50",
+                    i > 0 && "border-t border-neutral-100",
                   )}
                 >
-                  <dt className="text-[12px] text-[#0570b0]/70">{s.label}</dt>
-                  <dd className="text-[12px] font-semibold tabular-nums tracking-[-0.01em] text-[#0570b0]">
+                  <dt className="text-[12px] text-neutral-500">{s.label}</dt>
+                  <dd className="text-[12px] font-semibold tabular-nums tracking-[-0.01em] text-neutral-900">
                     {s.value}
                   </dd>
                 </div>
@@ -948,14 +1046,6 @@ export default function ChatPage() {
           </div>
         </header>
 
-        {/* A pastel wash in the landing page's own hues, sitting behind the
-            conversation. Fixed and pointer-transparent so it never interferes
-            with scrolling or hit-testing. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60rem_28rem_at_18%_-4rem,rgba(123,53,240,0.09),transparent_60%),radial-gradient(52rem_26rem_at_88%_6rem,rgba(5,134,210,0.10),transparent_62%),radial-gradient(46rem_24rem_at_50%_105%,rgba(53,148,98,0.09),transparent_60%)]"
-        />
-
         <div className="scroll-fade relative flex-1 overflow-y-auto px-5">
           <div className="mx-auto max-w-[46rem] space-y-6 py-8">
             {messages.length === 0 && (
@@ -986,38 +1076,22 @@ export default function ChatPage() {
                   </>
                 ) : (
                   <>
-                    {/* A four-tile echo of the landing page's bento, in the same
-                        five colour families, so the two pages read as one product. */}
                     <div className="mt-10 grid w-full max-w-md grid-cols-2 gap-2.5 sm:grid-cols-4">
                       {[
-                        { label: "Manuals", value: (stats?.documents ?? 0).toLocaleString(), tone: "code" as const },
-                        { label: "Chunks", value: (stats?.chunks ?? 0).toLocaleString(), tone: "source" as const },
-                        { label: "Codes", value: (stats?.faults ?? 0).toLocaleString(), tone: "causes" as const },
+                        { label: "Manuals", value: (stats?.documents ?? 0).toLocaleString() },
+                        { label: "Chunks", value: (stats?.chunks ?? 0).toLocaleString() },
+                        { label: "Codes", value: (stats?.faults ?? 0).toLocaleString() },
                         // A vector dimension is not a quantity — never comma-grouped.
-                        { label: "Dims", value: String(stats?.dims ?? 0), tone: "action" as const },
+                        { label: "Dims", value: String(stats?.dims ?? 0) },
                       ].map((s) => (
                         <div
                           key={s.label}
-                          className={cn(
-                            "rounded-2xl border px-3.5 py-3 text-left",
-                            TONE[s.tone].bg,
-                            TONE[s.tone].border,
-                          )}
+                          className="rounded-2xl border border-neutral-200/70 bg-white px-3.5 py-3 text-left"
                         >
-                          <p
-                            className={cn(
-                              "text-[20px] font-semibold tabular-nums leading-none tracking-[-0.03em]",
-                              TONE[s.tone].ink,
-                            )}
-                          >
+                          <p className="text-[20px] font-medium tabular-nums leading-none tracking-[-0.03em] text-neutral-950">
                             {s.value}
                           </p>
-                          <p
-                            className={cn(
-                              "mt-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] opacity-70",
-                              TONE[s.tone].ink,
-                            )}
-                          >
+                          <p className="mt-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-neutral-400">
                             {s.label}
                           </p>
                         </div>
@@ -1027,23 +1101,15 @@ export default function ChatPage() {
                     {/* Stacked on a narrow screen so four pills of different
                         widths don't read as scattered debris. */}
                     <div className="mt-8 flex w-full max-w-lg flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
-                      {SUGGESTIONS.map((q, i) => {
-                        const tone = SUGGESTION_TONES[i % SUGGESTION_TONES.length];
-                        return (
-                          <button
-                            key={q}
-                            onClick={() => handleSubmit(q)}
-                            className={cn(
-                              "rounded-full border px-3.5 py-2 text-[12.5px] font-medium tracking-[-0.01em] transition-all hover:-translate-y-px hover:shadow-[0_6px_16px_-8px_rgba(16,15,25,0.3)]",
-                              TONE[tone].bg,
-                              TONE[tone].border,
-                              TONE[tone].ink,
-                            )}
-                          >
-                            {q}
-                          </button>
-                        );
-                      })}
+                      {SUGGESTIONS.map((q) => (
+                        <button
+                          key={q}
+                          onClick={() => handleSubmit(q)}
+                          className="rounded-full border border-neutral-200/80 bg-white px-3.5 py-2 text-[12.5px] font-medium tracking-[-0.01em] text-neutral-600 transition-colors hover:border-neutral-950 hover:text-neutral-950"
+                        >
+                          {q}
+                        </button>
+                      ))}
                     </div>
                   </>
                 )}
@@ -1051,14 +1117,28 @@ export default function ChatPage() {
             )}
 
             {messages.map((msg, i) => (
-              <MessageBubble key={i} message={msg} index={i} />
+              <div key={i} className="space-y-2">
+                <MessageBubble message={msg} index={i} />
+                {/* Kept after the fact, collapsed: the answer is the point, but
+                    "where did this come from" should never need a rerun. */}
+                {msg.role === "assistant" && msg.trace && msg.trace.length > 0 && (
+                  <QueryTrace
+                    steps={msg.trace}
+                    live={false}
+                    open={!!openTrace[i]}
+                    onToggle={() => setOpenTrace((prev) => ({ ...prev, [i]: !prev[i] }))}
+                  />
+                )}
+              </div>
             ))}
 
             {loading && (
-              <div className="inline-flex items-center gap-2.5 rounded-full border border-sky-200/70 bg-sky-100/50 px-3.5 py-2 text-[13px] font-medium text-[#0570b0]">
-                <Loader2 className="size-3.5 animate-spin" />
-                <span className="shimmer">Searching the manuals…</span>
-              </div>
+              <QueryTrace
+                steps={liveTrace}
+                live
+                open={liveTraceOpen}
+                onToggle={() => setLiveTraceOpen((v) => !v)}
+              />
             )}
             <div ref={bottomRef} />
           </div>
@@ -1073,7 +1153,7 @@ export default function ChatPage() {
             }}
             className="mx-auto max-w-[46rem]"
           >
-            <div className="rounded-[26px] border border-neutral-200/80 bg-white p-2 shadow-[0_1px_2px_rgba(16,15,25,0.04),0_16px_40px_-16px_rgba(16,15,25,0.14)] transition-all focus-within:border-sky-300 focus-within:shadow-[0_0_0_4px_rgba(5,134,210,0.08),0_16px_40px_-16px_rgba(16,15,25,0.16)]">
+            <div className="rounded-[26px] border border-neutral-200/80 bg-white p-2 shadow-[0_1px_2px_rgba(16,15,25,0.04),0_16px_40px_-16px_rgba(16,15,25,0.14)] transition-colors focus-within:border-neutral-400">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -1106,7 +1186,7 @@ export default function ChatPage() {
                   onClick={() => fileInputRef.current?.click()}
                   disabled={upload.state === "busy"}
                   title="Upload a PDF manual"
-                  className="flex size-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-[#eeffe8] hover:text-[#2f7c53] disabled:opacity-40"
+                  className="flex size-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-40"
                 >
                   <Plus className="size-4" />
                 </button>
@@ -1119,7 +1199,7 @@ export default function ChatPage() {
                     "flex size-8 items-center justify-center rounded-full transition-colors",
                     listening
                       ? "bg-[#c64e27] text-white"
-                      : "text-neutral-400 hover:bg-purple-100/70 hover:text-[#5f24c4]",
+                      : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700",
                   )}
                 >
                   <Mic className={cn("size-4", listening && "animate-pulse")} />
