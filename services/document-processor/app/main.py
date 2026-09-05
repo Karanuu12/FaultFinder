@@ -8,13 +8,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import anyio
 
 from .chunking import chunk_pages
 from .pdf import extract_outline, extract_pdf_pages
+
+# Page rendering needs PyMuPDF directly; the flag mirrors pdf.py so the
+# endpoint can fail with a clear message instead of a NameError.
+try:
+    import pymupdf  # type: ignore[import-not-found]
+
+    _MUPDF = True
+except Exception:  # pragma: no cover
+    _MUPDF = False
+    pymupdf = None  # type: ignore[assignment]
 
 app = FastAPI(
     title="Timmo Document Processor",
@@ -127,6 +137,46 @@ async def parse_pdf(
         pages=pages,
         outline=extract_outline(raw),
     )
+
+
+@app.post("/page-image")
+async def page_image(
+    file: UploadFile = File(...),
+    page: int = Form(...),
+    dpi: int = Form(110),
+) -> Response:
+    """Render one page of a PDF to PNG, so a citation can be checked against
+    the actual manual rather than taken on trust.
+
+    Rendered on demand rather than at ingest: a 460-page manual would otherwise
+    cost 460 images to store for the handful of pages anyone ever cites.
+
+    `page` is 1-based, matching what the citation displays. dpi is capped
+    because this is a screen preview, not a print job -- 110dpi is legible on a
+    laptop and keeps a page under ~200KB.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    if not _MUPDF:
+        raise HTTPException(status_code=501, detail="PyMuPDF is required to render pages.")
+
+    dpi = max(40, min(dpi, 200))
+    try:
+        with pymupdf.open(stream=raw, filetype="pdf") as doc:
+            if page < 1 or page > doc.page_count:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Page {page} out of range (document has {doc.page_count}).",
+                )
+            pixmap = doc.load_page(page - 1).get_pixmap(dpi=dpi)
+            png = pixmap.tobytes("png")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - surface any render failure to caller
+        raise HTTPException(status_code=422, detail=f"Could not render page: {exc}") from exc
+
+    return Response(content=png, media_type="image/png")
 
 
 @app.post("/chunk", response_model=ChunkResponse)

@@ -19,6 +19,7 @@ import {
   Mic,
   ArrowUpRight,
   ChevronDown,
+  Maximize2,
 } from "lucide-react";
 
 interface Citation {
@@ -278,6 +279,100 @@ function citationLabel(title: string): string {
 }
 
 /**
+ * The cited page from the actual manual, rendered on demand.
+ *
+ * A page number in a chip is still only a claim -- it asks the reader to trust
+ * that page 412 says what the answer says it says. This shows them page 412.
+ * On a product whose entire argument is "we never assert anything without a
+ * source", being able to open the source is the argument.
+ */
+function PageViewer({
+  citation,
+  onClose,
+}: {
+  citation: Citation;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+  const src = `/api/page?doc=${encodeURIComponent(citation.document_id)}&page=${citation.page}`;
+
+  // Escape closes, matching every other overlay the user has ever used.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/40 p-4 backdrop-blur-[2px]"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 border-b border-neutral-100 px-5 py-3.5">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium tracking-[-0.01em] text-neutral-950">
+              {citationLabel(citation.title)} · page {citation.page}
+            </p>
+            {citation.section && (
+              <p className="truncate text-[11.5px] text-neutral-400">{citation.section}</p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+            title="Close (Esc)"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto bg-neutral-100 p-4">
+          {state === "loading" && (
+            <div className="flex items-center justify-center gap-2.5 py-16 text-[13px] text-neutral-500">
+              <Loader2 className="size-4 animate-spin" />
+              <span className="shimmer">Rendering page {citation.page}…</span>
+            </div>
+          )}
+          {state === "error" && (
+            <div className="mx-auto max-w-sm rounded-2xl border border-[#f0d9b8]/70 bg-[#fff8ef] px-4 py-3 text-[13px] leading-[1.55] text-[#8a5a1e]">
+              {error || "Could not render this page."}
+            </div>
+          )}
+          <img
+            src={src}
+            alt={`Page ${citation.page} of ${citationLabel(citation.title)}`}
+            className={cn(
+              "mx-auto w-full rounded-xl bg-white shadow-sm",
+              state !== "ready" && "hidden",
+            )}
+            onLoad={() => setState("ready")}
+            onError={async () => {
+              // The endpoint returns JSON on failure, which is more useful to
+              // show than a broken image icon.
+              try {
+                const r = await fetch(src);
+                const body = await r.json();
+                setError(body?.error ?? "");
+              } catch {
+                /* fall back to the generic message */
+              }
+              setState("error");
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Extraction pulls every embedded raster off a cited page, which on a real
  * manual includes the page furniture -- the 57x57 wrench and info glyphs
  * Schneider prints beside each note. Presenting those under "Diagrams" is
@@ -387,7 +482,15 @@ function spokenForm(a: CitedAnswer): string {
   return parts.join(" ");
 }
 
-function MessageBubble({ message, index }: { message: ChatMessage; index: number }) {
+function MessageBubble({
+  message,
+  index,
+  onOpenCitation,
+}: {
+  message: ChatMessage;
+  index: number;
+  onOpenCitation: (c: Citation) => void;
+}) {
   const isUser = message.role === "user";
   const a = message.structured;
   const [speaking, setSpeaking] = useState(false);
@@ -513,16 +616,19 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-neutral-100 bg-neutral-50/70 px-5 py-3 sm:px-7">
             <SectionLabel>Sources</SectionLabel>
             {a.citations.map((c, i) => (
-              <span
+              <button
                 key={i}
-                title={c.section}
-                className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white px-2.5 py-1 text-[11px] font-medium text-neutral-600"
+                type="button"
+                onClick={() => onOpenCitation(c)}
+                title={`${c.section}\nClick to open page ${c.page} of the manual`}
+                className="group inline-flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white px-2.5 py-1 text-[11px] font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900"
               >
                 <FileText className="size-3 text-neutral-400" />
                 {citationLabel(c.title)}
                 <span className="text-neutral-300">·</span>
                 <span className="tabular-nums font-semibold text-[#0570b0]">p.{c.page}</span>
-              </span>
+                <Maximize2 className="size-2.5 text-neutral-300 transition-colors group-hover:text-neutral-500" />
+              </button>
             ))}
           </div>
         )}
@@ -556,6 +662,7 @@ export default function ChatPage() {
   /** Which answers have their trace expanded, by message index. */
   const [openTrace, setOpenTrace] = useState<Record<number, boolean>>({});
   const [liveTraceOpen, setLiveTraceOpen] = useState(true);
+  const [openCitation, setOpenCitation] = useState<Citation | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -820,6 +927,9 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-svh bg-neutral-50 font-sans text-neutral-950 antialiased">
+      {openCitation && (
+        <PageViewer citation={openCitation} onClose={() => setOpenCitation(null)} />
+      )}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-30 bg-neutral-950/20 backdrop-blur-[2px] md:hidden"
@@ -1118,7 +1228,7 @@ export default function ChatPage() {
 
             {messages.map((msg, i) => (
               <div key={i} className="space-y-2">
-                <MessageBubble message={msg} index={i} />
+                <MessageBubble message={msg} index={i} onOpenCitation={setOpenCitation} />
                 {/* Kept after the fact, collapsed: the answer is the point, but
                     "where did this come from" should never need a rerun. */}
                 {msg.role === "assistant" && msg.trace && msg.trace.length > 0 && (
