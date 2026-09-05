@@ -27,6 +27,8 @@ interface Citation {
   title: string;
   page: number;
   section: string;
+  /** The retrieved passage, used to highlight the supporting text on the page. */
+  snippet?: string;
 }
 interface AnswerStep {
   step: number;
@@ -295,7 +297,9 @@ function PageViewer({
 }) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
-  const src = `/api/page?doc=${encodeURIComponent(citation.document_id)}&page=${citation.page}`;
+  const src =
+    `/api/page?doc=${encodeURIComponent(citation.document_id)}&page=${citation.page}` +
+    (citation.snippet ? `&q=${encodeURIComponent(citation.snippet)}` : "");
 
   // Escape closes, matching every other overlay the user has ever used.
   React.useEffect(() => {
@@ -323,6 +327,14 @@ function PageViewer({
             {citation.section && (
               <p className="truncate text-[11.5px] text-neutral-400">{citation.section}</p>
             )}
+          </div>
+          {citation.snippet && state === "ready" && (
+            <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-neutral-100 px-2.5 py-1 text-[10.5px] font-medium text-neutral-500 sm:inline-flex">
+              <span className="size-2 rounded-[3px] bg-[#ffdb59]" />
+              passage used
+            </span>
+          )}
+          <div className="flex shrink-0 items-center">
           </div>
           <button
             onClick={onClose}

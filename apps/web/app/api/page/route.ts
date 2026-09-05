@@ -11,6 +11,7 @@
  * because these are ~200KB PNGs.
  */
 import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
 import { readPdf } from "@/lib/pdf-store";
 
 export const dynamic = "force-dynamic";
@@ -37,9 +38,13 @@ export async function GET(request: NextRequest) {
   if (!Number.isInteger(page) || page < 1) {
     return Response.json({ error: "page must be a positive integer" }, { status: 400 });
   }
-
-  const key = `${documentId}:${page}`;
-  const cached = cache().get(key);
+  // The passage to mark on the page. Part of the cache key: the same page
+  // cited by two different answers highlights different sentences.
+  const highlight = (request.nextUrl.searchParams.get("q") ?? "").slice(0, 1500);
+  const cacheKey = `${documentId}:${page}:${
+    highlight ? createHash("sha1").update(highlight).digest("hex").slice(0, 12) : "plain"
+  }`;
+  const cached = cache().get(cacheKey);
   if (cached) {
     return new Response(new Uint8Array(cached), {
       headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=3600" },
@@ -59,6 +64,7 @@ export async function GET(request: NextRequest) {
   const form = new FormData();
   form.set("file", new Blob([new Uint8Array(pdf)], { type: "application/pdf" }), `${documentId}.pdf`);
   form.set("page", String(page));
+  if (highlight) form.set("highlight", highlight);
 
   let res: Response;
   try {
@@ -80,7 +86,7 @@ export async function GET(request: NextRequest) {
     const oldest = store.keys().next().value;
     if (oldest !== undefined) store.delete(oldest);
   }
-  store.set(key, png);
+  store.set(cacheKey, png);
 
   return new Response(new Uint8Array(png), {
     headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=3600" },

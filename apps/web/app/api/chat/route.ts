@@ -32,6 +32,11 @@ interface Citation {
   title: string;
   page: number;
   section: string;
+  /**
+   * The retrieved passage behind this citation, so the page viewer can
+   * highlight the supporting sentences rather than just opening the page.
+   */
+  snippet?: string;
 }
 
 interface HistoryTurn {
@@ -46,6 +51,10 @@ function citationFor(c: ScoredChunk): Citation {
     // The printed page label is what a technician looks for, not the PDF index.
     page: Number(c.pageLabel) || c.pagePdf,
     section: c.sectionPath.join(" › "),
+    // Carried so the page viewer can highlight the supporting text. Capped:
+    // this rides in every chat response, and the renderer only searches the
+    // first few dozen sentences anyway.
+    snippet: c.text.slice(0, 1500),
   };
 }
 
