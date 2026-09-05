@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n/context";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const NAV_LINK_IDS = ["home", "stats", "features", "preview"] as const;
 
@@ -76,6 +77,7 @@ export const Navbar = () => {
         </div>
 
         <div className="flex items-center gap-1.5">
+          <ThemeToggle variant="light" className="hidden sm:flex" />
           <LanguageSwitcher variant="light" className="hidden sm:block" />
 
           <a
@@ -112,8 +114,9 @@ export const Navbar = () => {
                 {label}
               </a>
             ))}
-            <div className="mt-1 border-t border-neutral-100 pt-1">
+            <div className="mt-1 flex items-center justify-between border-t border-neutral-100 pt-1">
               <LanguageSwitcher variant="light" />
+              <ThemeToggle variant="light" />
             </div>
           </div>
         )}

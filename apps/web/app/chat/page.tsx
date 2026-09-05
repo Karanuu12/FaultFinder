@@ -7,6 +7,7 @@ import { SPEECH_TAG } from "@/lib/language";
 import { useI18n } from "@/lib/i18n/context";
 import type { UiLanguage } from "@/lib/i18n/translations";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   ArrowUp,
   Loader2,
@@ -1337,6 +1338,7 @@ export default function ChatPage() {
                 {(stats?.chunks ?? 0).toLocaleString()} {t("chat.chunksWord")}
               </span>
             </div>
+            <ThemeToggle variant="chat" />
             {/* The one language control: it re-renders every string on this
                 page AND becomes the language /api/chat answers in. Top of the
                 page, same as the landing page's navbar. */}

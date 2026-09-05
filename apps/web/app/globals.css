@@ -208,3 +208,119 @@
       0 0 10px rgba(251,146,60,0.15);
   }
 }
+
+/* ===========================================================================
+ * Dark mode: "the white surfaces turn black, the black text turns white."
+ * ===========================================================================
+ * Hero.tsx, Navbar.tsx, footer.tsx, cta-11.tsx and the chat page were all
+ * written with literal Tailwind utilities (bg-white, text-neutral-950, ...)
+ * rather than the bg-background/text-foreground tokens above -- so toggling
+ * next-themes' `.dark` class on <html> does nothing on its own. This block is
+ * what makes it do something, without touching a single component file.
+ *
+ * Two things were deliberately NOT done, both for the same reason:
+ *
+ * 1. A whole-page `filter: invert(1) hue-rotate(180deg)` -- the classic
+ *    quick-dark-mode trick, and it genuinely matches "just invert white and
+ *    black" better than anything below. Rejected because `filter` on an
+ *    ancestor creates a new containing block for `position: fixed`
+ *    descendants -- and this app's fixed navbar, mobile menu, and the
+ *    citation-viewer modal would all detach from the viewport and scroll
+ *    away the instant dark mode was turned on. Recoloring is safe;
+ *    inverting the whole page is not, given how this app is built.
+ *
+ * 2. Inverting EVERY neutral shade uniformly (50<->950). That would also
+ *    flip the two surfaces that are deliberately dark regardless of page
+ *    theme -- the landing page's dashboard-preview mockup (a screenshot of a
+ *    dark app) and the user's own dark chat bubble -- turning them light,
+ *    which reads as broken rather than themed. So only the LIGHT end of the
+ *    scale (50-400, plus white/black themselves) is remapped below; neutral
+ *    700-950 backgrounds and `text-white` are left alone on purpose, which is
+ *    what keeps those two elements dark in both themes.
+ *
+ * Because of that boundary, this covers the app's own light canvas
+ * completely, but does not chase every hover state or gradient stop with
+ * total precision -- consistent with "keep this simple," not a line-by-line
+ * dark-theme rewrite of every component.
+ */
+.dark {
+  /* ---- surfaces: white/near-white -> near-black ---- */
+  --df-canvas: #0a0a0a;    /* was bg-white   */
+  --df-panel:  #101113;    /* was bg-neutral-50  */
+  --df-fill-1: #16181b;    /* was bg-neutral-100 */
+  --df-fill-2: #1d2024;    /* was bg-neutral-200 */
+  --df-fill-3: #262a30;    /* was bg-neutral-300 */
+  --df-fill-4: #33383f;    /* was bg-neutral-400 */
+
+  /* ---- text: near-black/grey -> near-white/grey, same ramp reversed ---- */
+  --df-ink-0: #f5f5f5;     /* was text-black / text-neutral-950 */
+  --df-ink-1: #eceef0;     /* was text-neutral-900 */
+  --df-ink-2: #d7dade;     /* was text-neutral-800 */
+  --df-ink-3: #c3c7cd;     /* was text-neutral-700 */
+  --df-ink-4: #a9aeb6;     /* was text-neutral-600 */
+  --df-ink-5: #90959e;     /* was text-neutral-500 */
+  --df-ink-6: #767c86;     /* was text-neutral-400 */
+  --df-ink-7: #5b616b;     /* was text-neutral-300 */
+}
+
+.dark .bg-white            { background-color: var(--df-canvas) !important; }
+.dark .bg-white\/70        { background-color: rgba(10,10,10,.70) !important; }
+.dark .bg-white\/80        { background-color: rgba(10,10,10,.80) !important; }
+.dark .bg-white\/85        { background-color: rgba(10,10,10,.85) !important; }
+.dark .bg-white\/90        { background-color: rgba(10,10,10,.90) !important; }
+.dark .bg-white\/95        { background-color: rgba(10,10,10,.95) !important; }
+.dark .hover\:bg-white:hover { background-color: var(--df-canvas) !important; }
+
+.dark .bg-neutral-50       { background-color: var(--df-panel) !important; }
+.dark .bg-neutral-50\/50   { background-color: rgba(16,17,19,.50) !important; }
+.dark .bg-neutral-50\/70   { background-color: rgba(16,17,19,.70) !important; }
+.dark .hover\:bg-neutral-50:hover     { background-color: var(--df-panel) !important; }
+.dark .hover\:bg-neutral-50\/50:hover { background-color: rgba(16,17,19,.50) !important; }
+
+.dark .bg-neutral-100       { background-color: var(--df-fill-1) !important; }
+.dark .hover\:bg-neutral-100:hover { background-color: var(--df-fill-1) !important; }
+.dark .bg-neutral-200       { background-color: var(--df-fill-2) !important; }
+.dark .bg-neutral-300       { background-color: var(--df-fill-3) !important; }
+.dark .bg-neutral-400       { background-color: var(--df-fill-4) !important; }
+
+.dark .text-black          { color: var(--df-ink-0) !important; }
+.dark .text-black\/80      { color: rgba(245,245,245,.80) !important; }
+.dark .text-black\/90      { color: rgba(245,245,245,.90) !important; }
+.dark .hover\:text-black:hover { color: var(--df-ink-0) !important; }
+.dark .text-neutral-950    { color: var(--df-ink-0) !important; }
+.dark .hover\:text-neutral-950:hover { color: var(--df-ink-0) !important; }
+.dark .text-neutral-900    { color: var(--df-ink-1) !important; }
+.dark .hover\:text-neutral-900:hover { color: var(--df-ink-1) !important; }
+.dark .text-neutral-800    { color: var(--df-ink-2) !important; }
+.dark .text-neutral-700    { color: var(--df-ink-3) !important; }
+.dark .hover\:text-neutral-700:hover { color: var(--df-ink-3) !important; }
+.dark .text-neutral-600    { color: var(--df-ink-4) !important; }
+.dark .text-neutral-500    { color: var(--df-ink-5) !important; }
+.dark .hover\:text-neutral-500:hover { color: var(--df-ink-5) !important; }
+.dark .group:hover .group-hover\:text-neutral-500 { color: var(--df-ink-5) !important; }
+.dark .text-neutral-400    { color: var(--df-ink-6) !important; }
+.dark .placeholder\:text-neutral-400::placeholder { color: var(--df-ink-6) !important; }
+.dark .text-neutral-300    { color: var(--df-ink-7) !important; }
+.dark .hover\:text-neutral-300:hover { color: var(--df-ink-7) !important; }
+
+.dark .border-neutral-100      { border-color: rgba(255,255,255,.07) !important; }
+.dark .border-neutral-100\/50   { border-color: rgba(255,255,255,.035) !important; }
+.dark .border-neutral-200      { border-color: rgba(255,255,255,.10) !important; }
+.dark .border-neutral-200\/50   { border-color: rgba(255,255,255,.05) !important; }
+.dark .border-neutral-200\/60   { border-color: rgba(255,255,255,.06) !important; }
+.dark .border-neutral-200\/70   { border-color: rgba(255,255,255,.07) !important; }
+.dark .border-neutral-200\/80   { border-color: rgba(255,255,255,.08) !important; }
+.dark .border-neutral-300      { border-color: rgba(255,255,255,.16) !important; }
+.dark .border-neutral-400      { border-color: rgba(255,255,255,.22) !important; }
+.dark .hover\:border-neutral-400:hover { border-color: rgba(255,255,255,.22) !important; }
+.dark .border-neutral-950      { border-color: var(--df-ink-0) !important; }
+.dark .hover\:border-neutral-950:hover { border-color: var(--df-ink-0) !important; }
+.dark .ring-neutral-100        { --tw-ring-color: rgba(255,255,255,.07) !important; }
+
+/* The hero's photo-to-canvas fade: swap the two literal classes it fades
+   through for the dark canvas colour instead of white, via a plain
+   background-image override rather than Tailwind's internal gradient
+   variables (whose exact names aren't worth depending on here). */
+.dark .from-white.via-white\/70 {
+  background-image: linear-gradient(to bottom, #0b0d10, rgba(11,13,16,.7), transparent) !important;
+}
