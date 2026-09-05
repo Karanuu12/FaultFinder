@@ -1,4 +1,4 @@
-"""PDF → text + page/section metadata + embedded image extraction."""
+"""PDF → text + page/section metadata + embedded image extraction + OCR."""
 from __future__ import annotations
 
 import base64
@@ -22,30 +22,64 @@ except Exception:  # pragma: no cover
     _PYPDF = False
     PdfReader = None  # type: ignore[assignment]
 
+try:
+    import pytesseract  # type: ignore[import-not-found]
+    from PIL import Image  # type: ignore[import-not-found]
+
+    _OCR = True
+except Exception:  # pragma: no cover
+    _OCR = False
+    pytesseract = None  # type: ignore[assignment]
+    Image = None  # type: ignore[assignment]
+
 
 MAX_IMAGE_SIZE = 500 * 1024  # 500 KB per image
+OCR_MIN_CHARS = 20  # if a page has fewer chars than this, run OCR
 
 
-def extract_pdf_pages(raw: bytes, include_images: bool = False) -> list[dict[str, Any]]:
+def extract_pdf_pages(
+    raw: bytes,
+    include_images: bool = False,
+    use_ocr: bool = False,
+) -> list[dict[str, Any]]:
     """Return a list of {page, section, text, images} for a raw PDF byte buffer.
 
     `images` is a list of base64-encoded JPEG/PNG thumbnails extracted from the page.
     Image extraction is opt-in: decoding every raster on a 170-page manual is slow,
     memory-hungry, and produces a response hundreds of megabytes large.
+
+    When `use_ocr` is True, pages with very little extracted text will be
+    re-processed through Tesseract OCR (renders the page as an image, runs OCR).
     """
     if _MUPDF and pymupdf is not None:
-        return _extract_mupdf(raw, include_images=include_images)
+        return _extract_mupdf(raw, include_images=include_images, use_ocr=use_ocr)
     if _PYPDF and PdfReader is not None:
         return _extract_pypdf(raw)
     raise RuntimeError("No PDF backend available (install pymupdf or pypdf).")
 
 
-def _extract_mupdf(raw: bytes, include_images: bool = False) -> list[dict[str, Any]]:
+def _extract_mupdf(
+    raw: bytes,
+    include_images: bool = False,
+    use_ocr: bool = False,
+) -> list[dict[str, Any]]:
     doc = pymupdf.open(stream=raw, filetype="pdf")  # type: ignore[attr-defined]
     pages: list[dict[str, Any]] = []
     for idx, page in enumerate(doc, start=1):
         text = page.get_text("text", sort=True).strip()
         images = _extract_images(page, page_number=idx) if include_images else []
+
+        # OCR fallback: if page has very little text, render and OCR
+        if use_ocr and len(text) < OCR_MIN_CHARS and _OCR and pytesseract is not None and Image is not None:
+            try:
+                pix = page.get_pixmap(dpi=200)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                ocr_text = pytesseract.image_to_string(img).strip()
+                if ocr_text:
+                    text = ocr_text
+            except Exception:
+                pass  # keep original text if OCR fails
+
         pages.append({
             "page": idx,
             "section": _detect_section(text),

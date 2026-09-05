@@ -67,15 +67,13 @@ function detectMachine(filename: string, firstPages: string) {
 async function parseDocument(
   file: File,
   documentId: string,
+  useOcr: boolean = false,
 ): Promise<{ title: string; pages: PageInput[]; outline: OutlineInput[] }> {
   const form = new FormData();
   form.set("file", file);
   form.set("document_id", documentId);
-  // Extract embedded diagrams/figures so they can be shown in cited answers.
-  // Capped at 3 per page, <=500KB each, pre-filtered by size before decoding
-  // (services/document-processor/app/pdf.py) so this stays reasonable even on
-  // a 300+ page manual.
   form.set("include_images", "true");
+  form.set("use_ocr", useOcr ? "true" : "false");
 
   const res = await fetch(`${PYTHON_URL}/parse`, { method: "POST", body: form });
   if (!res.ok) {
@@ -117,6 +115,7 @@ export async function POST(request: NextRequest) {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const documentId =
       (form.get("document_id") as string) || file.name.replace(/\.pdf$/i, "").replace(/\s+/g, "-");
+    const useOcr = form.get("use_ocr") === "true";
     // Client-supplied id so the browser can poll real progress while this
     // single long request is in flight.
     const jobId = (form.get("job_id") as string) || "";
@@ -146,7 +145,7 @@ export async function POST(request: NextRequest) {
 
     // 1. Parse
     setProgress(jobId, "parsing", 5, "Extracting text and diagrams…");
-    const { title, pages, outline } = await parseDocument(file, documentId);
+    const { title, pages, outline } = await parseDocument(file, documentId, useOcr);
     if (!pages.length) {
       return Response.json({ error: "No extractable text found in the PDF." }, { status: 422 });
     }
@@ -154,10 +153,8 @@ export async function POST(request: NextRequest) {
     // 2. Identify the machine so retrieval can filter on it
     const machine = detectMachine(file.name, pages.slice(0, 3).map((p) => p.text).join("\n"));
 
-    // No OCR pipeline (deliberate -- real vendor manuals tested came back
-    // 100% digital text; not worth the engineering cost for a near-zero
-    // case here). This is the honest substitute: a scanned/near-blank page
-    // is still surfaced, not silently dropped.
+    // OCR was applied during parsing if requested; low-text pages after OCR
+    // are genuinely blank/scanned pages that couldn't be read.
     const lowTextPages = pages.filter((p) => p.text.trim().length < 40).map((p) => p.page);
 
     // 3. Blocks → chunks → fault records

@@ -96,6 +96,7 @@ async def parse_pdf(
     file: UploadFile = File(...),
     document_id: str = Form(...),
     include_images: bool = Form(False),
+    use_ocr: bool = Form(False),
 ) -> ParseResponse:
     """Extract text + page/section metadata from an uploaded PDF.
 
@@ -112,7 +113,7 @@ async def parse_pdf(
         raise HTTPException(status_code=400, detail="Empty file.")
 
     try:
-        pages = extract_pdf_pages(raw, include_images=include_images)
+        pages = extract_pdf_pages(raw, include_images=include_images, use_ocr=use_ocr)
     except Exception as exc:  # noqa: BLE001 - surface any parse failure to caller
         raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}") from exc
 
@@ -141,6 +142,7 @@ async def process_pdf(
     document_id: str = Form(...),
     max_chars: int = Form(1800),
     overlap: int = Form(120),
+    use_ocr: bool = Form(False),
 ) -> ChunkResponse:
     """One-call convenience: parse then chunk a PDF."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -148,7 +150,7 @@ async def process_pdf(
 
     raw = await file.read()
     try:
-        pages = extract_pdf_pages(raw)
+        pages = extract_pdf_pages(raw, use_ocr=use_ocr)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}") from exc
 
@@ -168,7 +170,7 @@ async def process_pdf(
         max_chars=max_chars,
         overlap=overlap,
     )
-    with anyio.fail_after(15):
+    with anyio.fail_after(30):
         return ChunkResponse(chunks=chunk_pages(req, max_chars=max_chars, overlap=overlap))
 
 

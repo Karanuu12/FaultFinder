@@ -20,6 +20,9 @@ import {
   AlertCircle,
   Trash2,
   Sparkles,
+  Volume2,
+  VolumeX,
+  Mic,
 } from "lucide-react";
 
 interface Citation {
@@ -88,9 +91,51 @@ const CONFIDENCE_STYLE: Record<CitedAnswer["confidence"], string> = {
   low: "bg-red-50 text-red-600 ring-1 ring-red-100",
 };
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+let _currentUtterance: SpeechSynthesisUtterance | null = null;
+let _speakingIndex: number | null = null;
+let _onStateChange: ((i: number | null) => void) | null = null;
+
+export function speakText(text: string, index: number, onStateChange?: (i: number | null) => void) {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  // If already speaking this bubble, stop
+  if (_speakingIndex === index) {
+    window.speechSynthesis.cancel();
+    _currentUtterance = null;
+    _speakingIndex = null;
+    onStateChange?.(null);
+    _onStateChange?.(null);
+    return;
+  }
+  // Stop any ongoing speech
+  window.speechSynthesis.cancel();
+  _currentUtterance = null;
+  _onStateChange?.(null);
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.9;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  utterance.onend = () => {
+    _speakingIndex = null;
+    _currentUtterance = null;
+    onStateChange?.(null);
+  };
+  utterance.onerror = () => {
+    _speakingIndex = null;
+    _currentUtterance = null;
+    onStateChange?.(null);
+  };
+  _currentUtterance = utterance;
+  _speakingIndex = index;
+  _onStateChange = onStateChange ?? null;
+  onStateChange?.(index);
+  window.speechSynthesis.speak(utterance);
+}
+
+function MessageBubble({ message, index }: { message: ChatMessage; index: number }) {
   const isUser = message.role === "user";
   const a = message.structured;
+  const [speaking, setSpeaking] = useState(false);
 
   return (
     <div className={cn("flex items-start gap-3", isUser ? "flex-row-reverse" : "")}>
@@ -214,6 +259,21 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                     </div>
                   </div>
                 )}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => speakText(a.meaning || "", index, (i) => setSpeaking(i === index))}
+                    className={cn(
+                      "flex size-6 items-center justify-center rounded-full transition-colors",
+                      speaking
+                        ? "bg-emerald-100 text-emerald-600"
+                        : "text-neutral-400 hover:bg-neutral-100 hover:text-emerald-600",
+                    )}
+                    title={speaking ? "Stop" : "Listen"}
+                  >
+                    {speaking ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -241,8 +301,28 @@ export default function ChatPage() {
   );
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [uploadPct, setUploadPct] = useState(0);
+  const [useOcr, setUseOcr] = useState(false);
+  const [listening, setListening] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const startListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) { alert("Speech recognition is not supported in this browser."); return; }
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(transcript);
+      setListening(false);
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    setListening(true);
+    recognition.start();
+  };
 
   const refreshStats = React.useCallback(async () => {
     try {
@@ -287,6 +367,7 @@ export default function ChatPage() {
     setUpload({ state: "busy", message: `Uploading ${file.name}…` });
     const body = new FormData();
     body.set("file", file);
+    if (useOcr) body.set("use_ocr", "true");
 
     // A dev-server reconnect (HMR), a proxy, or just a very long request can
     // drop the CLIENT's connection while the SERVER keeps working and
@@ -535,6 +616,17 @@ export default function ChatPage() {
               />
             </label>
 
+            <label className="mt-1.5 flex items-center justify-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={useOcr}
+                onChange={(e) => setUseOcr(e.target.checked)}
+                disabled={upload.state === "busy"}
+                className="size-3 rounded border-neutral-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span>OCR for scanned pages (slower, requires Tesseract)</span>
+            </label>
+
             {upload.state !== "idle" && (
               <div className="mt-2 space-y-1.5">
                 {upload.state === "busy" && (
@@ -666,7 +758,7 @@ export default function ChatPage() {
             )}
 
             {messages.map((msg, i) => (
-              <MessageBubble key={i} message={msg} />
+              <MessageBubble key={i} message={msg} index={i} />
             ))}
             {loading && (
               <div className="flex items-center gap-2.5 rounded-2xl border border-neutral-200/70 bg-white px-5 py-3.5 text-sm text-neutral-500 shadow-sm">
@@ -702,6 +794,20 @@ export default function ChatPage() {
               disabled={loading}
               className="flex-1 rounded-2xl border border-neutral-200/80 bg-neutral-50 px-4 py-3 text-sm text-neutral-900 placeholder:text-neutral-400 transition focus:border-emerald-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-100 disabled:opacity-50"
             />
+            <button
+              type="button"
+              onClick={startListening}
+              disabled={loading || listening}
+              className={cn(
+                "flex size-10 shrink-0 items-center justify-center rounded-full transition-all",
+                listening
+                  ? "bg-emerald-500 text-white shadow-lg shadow-emerald-300/50 animate-pulse"
+                  : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-700",
+              )}
+              title="Voice input"
+            >
+              <Mic className="size-4" />
+            </button>
             <button
               type="submit"
               disabled={!input.trim() || loading}
