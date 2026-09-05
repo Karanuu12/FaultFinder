@@ -3,12 +3,10 @@
 import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import {
-  type AnswerLanguage,
-  LANGUAGE_OPTIONS,
-  SPEECH_TAG,
-  hasDevanagari,
-} from "@/lib/language";
+import { SPEECH_TAG } from "@/lib/language";
+import { useI18n } from "@/lib/i18n/context";
+import type { UiLanguage } from "@/lib/i18n/translations";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ArrowUp,
   Loader2,
@@ -26,7 +24,6 @@ import {
   ArrowUpRight,
   ChevronDown,
   Maximize2,
-  Languages,
 } from "lucide-react";
 
 interface Citation {
@@ -73,6 +70,13 @@ interface ChatMessage {
  * manual it searched, how many passages came back, whether the fault index
  * answered outright. Every line here is a real event with real numbers,
  * reported after the work it names finished. Nothing is on a timer.
+ *
+ * Known scope cut: the step labels themselves ("Read the question",
+ * "Retrieved passages") are generated server-side in English and are not
+ * threaded through the UI-language system below. Translating them would mean
+ * passing the page's language into every ingest/chat route and every
+ * traceStep() call -- real work, but this panel is a transparency aid, not
+ * the primary chrome or the answer, so it is left English-only for now.
  */
 function QueryTrace({
   steps,
@@ -85,6 +89,7 @@ function QueryTrace({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   const latest = steps[steps.length - 1];
 
   return (
@@ -105,7 +110,7 @@ function QueryTrace({
             live && "shimmer",
           )}
         >
-          {live ? (latest?.label ?? "Searching the manuals…") : "How this was answered"}
+          {live ? (latest?.label ?? t("chat.searchingManuals")) : t("chat.howThisWasAnswered")}
         </span>
         {!live && steps.length > 0 && (
           <span className="shrink-0 text-[11px] tabular-nums text-neutral-400">
@@ -141,7 +146,7 @@ function QueryTrace({
           {live && (
             <li className="flex gap-2.5">
               <span className="mt-[6px] size-1.5 shrink-0 animate-pulse rounded-full bg-neutral-400" />
-              <span className="shimmer text-[12.5px] font-medium text-neutral-500">Working…</span>
+              <span className="shimmer text-[12.5px] font-medium text-neutral-500">{t("chat.working")}</span>
             </li>
           )}
         </ol>
@@ -201,17 +206,17 @@ interface IndexStats {
  *
  * Everything else is neutral. One accent, in one place, meaning one thing.
  */
-const ACCENT = {
-  green: "#359462",
-  amber: "#c64e27",
-  sky: "#0570b0",
-} as const;
 
 /** Confidence is a judgement, so it gets a dot -- not a filled badge. */
 const CONFIDENCE_STYLE: Record<CitedAnswer["confidence"], { dot: string; text: string }> = {
   high: { dot: "bg-[#359462]", text: "text-[#2f7c53]" },
   medium: { dot: "bg-[#c98a2b]", text: "text-[#96681c]" },
   low: { dot: "bg-[#c64e27]", text: "text-[#a8401f]" },
+};
+const CONFIDENCE_KEY: Record<CitedAnswer["confidence"], "confidenceHigh" | "confidenceMedium" | "confidenceLow"> = {
+  high: "confidenceHigh",
+  medium: "confidenceMedium",
+  low: "confidenceLow",
 };
 
 /** Small-caps section label. One typographic device, used consistently. */
@@ -236,9 +241,11 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
  * untouched.
  *
  * A marker pointing past the end of the citation list means the model
- * referenced a source that was not actually returned -- worth flagging, not
- * hiding, on a product whose whole claim is that nothing is asserted without a
- * page behind it.
+ * referenced a source that was not actually returned with this answer. That
+ * marker is simply dropped rather than shown as a chip: the surrounding
+ * sentence is still whatever the model said, and citations that DID resolve
+ * are still shown normally -- this only removes the specific unresolvable
+ * reference, not the claim itself.
  */
 // Built per call rather than shared: a /g regex carries a mutable lastIndex,
 // and one instance reused across renders would skip matches unpredictably.
@@ -253,27 +260,25 @@ function CitedText({ text, citations }: { text: string; citations: Citation[] })
   const re = sourceMarker();
   while ((m = re.exec(text)) !== null) {
     const cite = citations[Number(m[1] ?? m[2]) - 1];
+    if (!cite) {
+      // Unresolvable marker: drop the marker text itself, keep everything
+      // around it untouched -- no chip, no "unverified" label, just the
+      // sentence as if the marker had never been there.
+      parts.push(text.slice(last, m.index));
+      last = m.index + m[0].length;
+      continue;
+    }
     // Markers usually trail a space before the sentence's period; trimming the
     // preceding space keeps punctuation tight against the chip.
     parts.push(text.slice(last, m.index).replace(/\s+$/, ""));
     parts.push(
-      cite ? (
-        <sup
-          key={`${m.index}-c`}
-          title={`${citationLabel(cite.title)} — ${cite.section}`}
-          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-neutral-100 px-1 py-px align-baseline text-[9.5px] font-semibold tabular-nums text-[#0570b0]"
-        >
-          p.{cite.page}
-        </sup>
-      ) : (
-        <sup
-          key={`${m.index}-c`}
-          title="The model referenced a source that was not returned with this answer — treat this sentence as unverified."
-          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-[#c64e27]/10 px-1 py-px align-baseline text-[9.5px] font-semibold text-[#a8401f]"
-        >
-          unverified
-        </sup>
-      ),
+      <sup
+        key={`${m.index}-c`}
+        title={`${citationLabel(cite.title)} — ${cite.section}`}
+        className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-neutral-100 px-1 py-px align-baseline text-[9.5px] font-semibold tabular-nums text-[#0570b0]"
+      >
+        p.{cite.page}
+      </sup>,
     );
     last = m.index + m[0].length;
   }
@@ -302,6 +307,7 @@ function PageViewer({
   citation: Citation;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const src =
@@ -329,7 +335,7 @@ function PageViewer({
         <div className="flex items-start gap-3 border-b border-neutral-100 px-5 py-3.5">
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-medium tracking-[-0.01em] text-neutral-950">
-              {citationLabel(citation.title)} · page {citation.page}
+              {citationLabel(citation.title)} · p.{citation.page}
             </p>
             {citation.section && (
               <p className="truncate text-[11.5px] text-neutral-400">{citation.section}</p>
@@ -338,15 +344,13 @@ function PageViewer({
           {citation.snippet && state === "ready" && (
             <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-neutral-100 px-2.5 py-1 text-[10.5px] font-medium text-neutral-500 sm:inline-flex">
               <span className="size-2 rounded-[3px] bg-[#ffdb59]" />
-              passage used
+              {t("chat.passageUsed")}
             </span>
           )}
-          <div className="flex shrink-0 items-center">
-          </div>
           <button
             onClick={onClose}
             className="flex size-7 shrink-0 items-center justify-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-            title="Close (Esc)"
+            title={t("chat.closeEsc")}
           >
             <X className="size-4" />
           </button>
@@ -356,12 +360,12 @@ function PageViewer({
           {state === "loading" && (
             <div className="flex items-center justify-center gap-2.5 py-16 text-[13px] text-neutral-500">
               <Loader2 className="size-4 animate-spin" />
-              <span className="shimmer">Rendering page {citation.page}…</span>
+              <span className="shimmer">{t("chat.renderingPage", { page: citation.page })}</span>
             </div>
           )}
           {state === "error" && (
             <div className="mx-auto max-w-sm rounded-2xl border border-[#f0d9b8]/70 bg-[#fff8ef] px-4 py-3 text-[13px] leading-[1.55] text-[#8a5a1e]">
-              {error || "Could not render this page."}
+              {error || t("chat.couldNotRenderPage")}
             </div>
           )}
           <img
@@ -405,13 +409,14 @@ function PageViewer({
 const MIN_DIAGRAM_PX = 130;
 
 function Diagrams({ images }: { images: string[] }) {
+  const { t } = useI18n();
   const [usable, setUsable] = useState<Record<number, boolean>>({});
   const candidates = images.slice(0, 6);
   const anyUsable = candidates.some((_, i) => usable[i]);
 
   return (
     <div className={cn("space-y-2.5", !anyUsable && "hidden")}>
-      <SectionLabel>Diagrams from the manual</SectionLabel>
+      <SectionLabel>{t("chat.diagramsFromManual")}</SectionLabel>
       <div className="grid grid-cols-2 gap-2.5">
         {candidates.map((img, i) => (
           <div
@@ -522,13 +527,12 @@ function MessageBubble({
   message,
   index,
   onOpenCitation,
-  language,
 }: {
   message: ChatMessage;
   index: number;
   onOpenCitation: (c: Citation) => void;
-  language: AnswerLanguage;
 }) {
+  const { t, lang } = useI18n();
   const isUser = message.role === "user";
   const a = message.structured;
   const [speaking, setSpeaking] = useState(false);
@@ -564,26 +568,20 @@ function MessageBubble({
               {a.error_code}
             </span>
           ) : (
-            <span className="text-[13px] font-medium tracking-[-0.01em] text-neutral-950">Answer</span>
+            <span className="text-[13px] font-medium tracking-[-0.01em] text-neutral-950">{t("chat.answer")}</span>
           )}
           <span className="flex items-center gap-1.5">
             <span className={cn("size-1.5 rounded-full", confidence.dot)} />
             <span className={cn("text-[11px] font-medium", confidence.text)}>
-              {a.confidence} confidence
+              {t(`chat.${CONFIDENCE_KEY[a.confidence]}`)}{t("chat.confidenceSuffix")}
             </span>
           </span>
           <button
             onClick={() => {
               const spoken = spokenForm(a);
-              // Read the ANSWER's script, not the request setting: an "auto"
-              // request that came back in Devanagari still needs a Hindi voice.
-              const tag =
-                language !== "auto"
-                  ? SPEECH_TAG[language]
-                  : hasDevanagari(spoken)
-                    ? SPEECH_TAG.hi
-                    : SPEECH_TAG.en;
-              speakText(spoken, index, (i) => setSpeaking(i === index), tag);
+              // Read in the page's own language: the answer language and the
+              // UI language are the same control, so they always match.
+              speakText(spoken, index, (i) => setSpeaking(i === index), SPEECH_TAG[lang]);
             }}
             className={cn(
               "ml-auto flex size-7 items-center justify-center rounded-full transition-colors",
@@ -591,7 +589,7 @@ function MessageBubble({
                 ? "bg-[#359462]/10 text-[#2f7c53]"
                 : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900",
             )}
-            title={speaking ? "Stop reading" : "Read answer aloud"}
+            title={speaking ? t("chat.stopReading") : t("chat.readAloud")}
           >
             {speaking ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
           </button>
@@ -618,7 +616,7 @@ function MessageBubble({
 
           {a.probable_causes.length > 0 && (
             <div className="space-y-2.5">
-              <SectionLabel>Probable causes</SectionLabel>
+              <SectionLabel>{t("chat.probableCauses")}</SectionLabel>
               <ul className="space-y-1.5">
                 {a.probable_causes.map((c, i) => (
                   <li
@@ -637,7 +635,7 @@ function MessageBubble({
 
           {a.corrective_action.length > 0 && (
             <div className="space-y-2.5">
-              <SectionLabel>Corrective action</SectionLabel>
+              <SectionLabel>{t("chat.correctiveAction")}</SectionLabel>
               {/* The one place green earns its keep: these are the steps that
                   actually fix the machine, and the numerals should be findable
                   when you glance back at the screen mid-repair. */}
@@ -663,13 +661,13 @@ function MessageBubble({
             with the answer for attention, always findable. */}
         {a.citations.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-neutral-100 bg-neutral-50/70 px-5 py-3 sm:px-7">
-            <SectionLabel>Sources</SectionLabel>
+            <SectionLabel>{t("chat.sources")}</SectionLabel>
             {a.citations.map((c, i) => (
               <button
                 key={i}
                 type="button"
                 onClick={() => onOpenCitation(c)}
-                title={`${c.section}\nClick to open page ${c.page} of the manual`}
+                title={`${c.section}\n${t("chat.openPage", { page: c.page })}`}
                 className="group inline-flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white px-2.5 py-1 text-[11px] font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900"
               >
                 <FileText className="size-3 text-neutral-400" />
@@ -686,15 +684,8 @@ function MessageBubble({
   );
 }
 
-const SUGGESTIONS = [
-  "E101 on the injection molding machine",
-  "Why is the press overheating?",
-  "E204 on the Press-2000",
-  "b005 on powerflex",
-];
-
-
 export default function ChatPage() {
+  const { t, lang, dict } = useI18n();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -712,20 +703,22 @@ export default function ChatPage() {
   const [openTrace, setOpenTrace] = useState<Record<number, boolean>>({});
   const [liveTraceOpen, setLiveTraceOpen] = useState(true);
   const [openCitation, setOpenCitation] = useState<Citation | null>(null);
-  const [language, setLanguage] = useState<AnswerLanguage>("auto");
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  /**
+   * The page's UI language IS the answer language -- one control, both
+   * effects (see lib/i18n/context.tsx). `lang` is always one of
+   * "en"/"hi"/"mr", so speech recognition and TTS never need an "auto" case.
+   */
+  const language: UiLanguage = lang;
+
   const startListening = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) { alert("Speech recognition is not supported in this browser."); return; }
+    if (!SpeechRecognition) { alert(t("chat.speechNotSupported")); return; }
     const recognition = new SpeechRecognition();
-    // Dictation is script-specific: an en-US recogniser transcribes Hindi
-    // speech as English nonsense rather than failing, so this has to follow
-    // the chosen language. "Auto" can't be resolved before hearing anything,
-    // so it defaults to English.
-    recognition.lang = SPEECH_TAG[language === "auto" ? "en" : language];
+    recognition.lang = SPEECH_TAG[language];
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
     recognition.onresult = (event: any) => {
@@ -759,18 +752,18 @@ export default function ChatPage() {
   }, [messages, loading]);
 
   const handleDelete = async (documentId: string, label: string) => {
-    if (!confirm(`Delete "${label}"? This removes it from the index; re-upload to add it back.`)) return;
+    if (!confirm(t("chat.deleteConfirm", { label }))) return;
     setDeletingId(documentId);
     try {
       const res = await fetch(`/api/documents?id=${encodeURIComponent(documentId)}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setUpload({ state: "error", message: data.error ?? `Delete failed (${res.status})` });
+        setUpload({ state: "error", message: data.error ?? t("chat.errorPrefix", { status: res.status }) });
         return;
       }
       refreshStats();
     } catch (err) {
-      setUpload({ state: "error", message: err instanceof Error ? err.message : "Delete failed" });
+      setUpload({ state: "error", message: err instanceof Error ? err.message : t("chat.deleteFailed") });
     } finally {
       setDeletingId(null);
     }
@@ -783,7 +776,7 @@ export default function ChatPage() {
    */
   const handleUpload = async (file: File) => {
     setUploadPct(0);
-    setUpload({ state: "busy", message: `Uploading ${file.name}…` });
+    setUpload({ state: "busy", message: t("chat.uploading", { name: file.name }) });
     const body = new FormData();
     body.set("file", file);
     if (useOcr) body.set("use_ocr", "true");
@@ -812,7 +805,7 @@ export default function ChatPage() {
     // took (73s on a 172-page manual), which reads as "stuck" when it isn't.
     const jobId = crypto.randomUUID();
     body.set("job_id", jobId);
-    let stageLabel = "Uploading";
+    let stageLabel = t("chat.uploading", { name: "" }).split(" ")[0];
     const tick = setInterval(async () => {
       try {
         const r = await fetch(`/api/ingest/progress?id=${jobId}`);
@@ -820,7 +813,12 @@ export default function ChatPage() {
         const p = await r.json();
         if (typeof p.pct === "number" && p.pct > 0) setUploadPct(p.pct);
         if (p.stage && p.stage !== "unknown") {
-          stageLabel = p.stage === "embedding" ? "Embedding" : p.stage === "parsing" ? "Parsing" : p.stage === "chunking" ? "Chunking" : p.stage === "indexing" ? "Indexing" : stageLabel;
+          stageLabel =
+            p.stage === "embedding" ? t("chat.stageEmbedding")
+            : p.stage === "parsing" ? t("chat.stageParsing")
+            : p.stage === "chunking" ? t("chat.stageChunking")
+            : p.stage === "indexing" ? t("chat.stageIndexing")
+            : stageLabel;
           setUpload({ state: "busy", message: `${stageLabel} ${file.name}${p.detail ? ` — ${p.detail}` : ""}` });
         }
       } catch {
@@ -841,7 +839,15 @@ export default function ChatPage() {
         );
         if (found) {
           setStats(data);
-          finish(true, `Indexed ${found.title}: ${found.pages} pages, ${found.chunks} chunks, ${found.faults ?? 0} fault codes.`);
+          finish(
+            true,
+            t("chat.indexedSummary", {
+              title: found.title,
+              pages: found.pages,
+              chunks: found.chunks,
+              faults: found.faults ?? 0,
+            }),
+          );
         }
       } catch {
         /* poll failures are silent -- the XHR path or the next poll tick still covers it */
@@ -850,10 +856,7 @@ export default function ChatPage() {
 
     // 12 min ceiling: past this, stop pretending and say so plainly instead
     // of spinning forever.
-    const giveUp = setTimeout(
-      () => finish(false, "This upload is taking unusually long. Check the manuals list — it may have finished; if not, try again."),
-      12 * 60 * 1000,
-    );
+    const giveUp = setTimeout(() => finish(false, t("chat.takingLong")), 12 * 60 * 1000);
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/ingest");
@@ -864,7 +867,7 @@ export default function ChatPage() {
       if (e.lengthComputable) setUploadPct(Math.min(5, Math.round((e.loaded / e.total) * 5)));
     };
     xhr.upload.onload = () => {
-      setUpload({ state: "busy", message: `Parsing ${file.name}…` });
+      setUpload({ state: "busy", message: t("chat.parsing", { name: file.name }) });
     };
 
     xhr.onload = () => {
@@ -875,19 +878,27 @@ export default function ChatPage() {
         /* fall through to generic error below */
       }
       if (xhr.status < 200 || xhr.status >= 300) {
-        finish(false, (data.error as string) ?? `Upload failed (${xhr.status})`);
+        finish(false, (data.error as string) ?? t("chat.uploadFailedGeneric", { status: xhr.status }));
         return;
       }
       const lowText = Array.isArray(data.low_text_pages) ? (data.low_text_pages as number[]) : [];
-      const warn = lowText.length ? ` ${lowText.length} page(s) had little/no extractable text (scanned?).` : "";
-      finish(true, `Indexed ${data.title}: ${data.pages} pages, ${data.chunks} chunks, ${data.faults} fault codes.${warn}`);
+      const warn = lowText.length ? t("chat.scannedWarning", { count: lowText.length }) : "";
+      finish(
+        true,
+        t("chat.indexedSummary", {
+          title: data.title as string,
+          pages: data.pages as number,
+          chunks: data.chunks as number,
+          faults: data.faults as number,
+        }) + warn,
+      );
     };
 
     xhr.onerror = () => {
       // A dropped connection is exactly what the poll is for -- don't
       // declare failure yet, let it keep checking rather than show a false
       // error for an upload that's actually still finishing server-side.
-      setUpload({ state: "busy", message: `Connection interrupted — still checking on ${file.name}…` });
+      setUpload({ state: "busy", message: t("chat.connectionInterrupted", { name: file.name }) });
     };
     xhr.send(body);
   };
@@ -944,7 +955,11 @@ export default function ChatPage() {
         const err = await res.text();
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: `Error (${res.status}): ${err.slice(0, 200)}`, trace: finalTrace },
+          {
+            role: "assistant",
+            content: `${t("chat.errorPrefix", { status: res.status })}: ${err.slice(0, 200)}`,
+            trace: finalTrace,
+          },
         ]);
         return;
       }
@@ -961,7 +976,10 @@ export default function ChatPage() {
     } catch (err) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `Network error: ${err instanceof Error ? err.message : "Unknown"}` },
+        {
+          role: "assistant",
+          content: `${t("chat.networkError")}: ${err instanceof Error ? err.message : t("chat.unknownError")}`,
+        },
       ]);
     } finally {
       clearInterval(poll);
@@ -974,10 +992,10 @@ export default function ChatPage() {
   const hasManuals = (stats?.documents ?? 0) > 0;
 
   const pipelineStats = [
-    { label: "Chunks", value: stats ? stats.chunks.toLocaleString() : "—" },
-    { label: "Fault codes", value: stats ? String(stats.faults) : "—" },
-    { label: "Vector dims", value: stats?.dims ? String(stats.dims) : "—" },
-    { label: "Embedder", value: "Jina v3" },
+    { label: t("chat.pipelineChunks"), value: stats ? stats.chunks.toLocaleString() : "—" },
+    { label: t("chat.pipelineFaultCodes"), value: stats ? String(stats.faults) : "—" },
+    { label: t("chat.pipelineVectorDims"), value: stats?.dims ? String(stats.dims) : "—" },
+    { label: t("chat.pipelineEmbedder"), value: "Jina v3" },
   ];
 
   return (
@@ -1005,7 +1023,7 @@ export default function ChatPage() {
               F
             </div>
             <span className="text-[14px] font-semibold tracking-[-0.02em] text-neutral-950">
-              FaultFinder
+              {t("chat.faultFinder")}
             </span>
             <ArrowUpRight className="size-3.5 text-neutral-300 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-neutral-500" />
           </Link>
@@ -1021,7 +1039,7 @@ export default function ChatPage() {
           {/* Manuals */}
           <section>
             <div className="mb-2.5 flex items-baseline gap-2 px-1">
-              <SectionLabel>Manuals</SectionLabel>
+              <SectionLabel>{t("chat.manuals")}</SectionLabel>
               <span className="ml-auto text-[11px] font-medium tabular-nums text-neutral-400">
                 {stats?.documents ?? 0}
               </span>
@@ -1030,7 +1048,7 @@ export default function ChatPage() {
             <div className="space-y-1">
               {documents.length === 0 && (
                 <p className="rounded-2xl border border-dashed border-neutral-200 px-3.5 py-3 text-[12px] leading-[1.5] text-neutral-400">
-                  Nothing indexed yet. Upload a PDF manual to begin.
+                  {t("chat.nothingIndexed")}
                 </p>
               )}
               {documents.map((doc) => (
@@ -1046,14 +1064,14 @@ export default function ChatPage() {
                       {doc.model || doc.title}
                     </p>
                     <p className="text-[11px] tabular-nums text-neutral-400">
-                      {doc.pages} pages · {doc.chunks ?? "—"} chunks
-                      {doc.faults ? ` · ${doc.faults} codes` : ""}
+                      {t("chat.pagesLabel", { pages: doc.pages })} · {t("chat.chunksLabel", { chunks: doc.chunks ?? "—" })}
+                      {doc.faults ? t("chat.codesLabel", { faults: doc.faults }) : ""}
                     </p>
                   </div>
                   <button
                     onClick={() => handleDelete(doc.document_id, doc.model || doc.title)}
                     disabled={deletingId === doc.document_id}
-                    title="Delete manual"
+                    title={t("chat.deleteManual")}
                     className="flex size-7 shrink-0 items-center justify-center rounded-lg text-neutral-300 opacity-0 transition hover:bg-[#c64e27]/10 hover:text-[#c64e27] focus-visible:opacity-100 disabled:opacity-100 group-hover:opacity-100"
                   >
                     {deletingId === doc.document_id ? (
@@ -1079,7 +1097,7 @@ export default function ChatPage() {
               ) : (
                 <Plus className="size-3.5" />
               )}
-              {upload.state === "busy" ? "Indexing…" : "Upload PDF manual"}
+              {upload.state === "busy" ? t("chat.indexingEllipsis") : t("chat.uploadPdfManual")}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1102,7 +1120,7 @@ export default function ChatPage() {
                 disabled={upload.state === "busy"}
                 className="size-3 rounded border-neutral-300 accent-neutral-950"
               />
-              <span>OCR scanned pages (slower)</span>
+              <span>{t("chat.ocrScanned")}</span>
             </label>
 
             {upload.state !== "idle" && (
@@ -1140,7 +1158,7 @@ export default function ChatPage() {
           {/* Pipeline — a definition list, not four boxes. */}
           <section>
             <div className="mb-2.5 px-1">
-              <SectionLabel>Pipeline</SectionLabel>
+              <SectionLabel>{t("chat.pipeline")}</SectionLabel>
             </div>
             <dl className="overflow-hidden rounded-2xl border border-neutral-200/70">
               {pipelineStats.map((s, i) => (
@@ -1164,22 +1182,19 @@ export default function ChatPage() {
           <section>
             <details className="group rounded-2xl border border-neutral-200/70 px-3.5 py-2.5">
               <summary className="cursor-pointer list-none text-[11px] font-medium text-neutral-500 transition-colors hover:text-neutral-900">
-                Setup &amp; troubleshooting
+                {t("chat.setupTroubleshooting")}
                 <span className="float-right text-neutral-300 transition-transform group-open:rotate-45">
                   +
                 </span>
               </summary>
               <div className="mt-3 space-y-2 text-[11px] leading-[1.6] text-neutral-500">
                 <p>
-                  Requires the parser at <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">:8080</code>{" "}
-                  plus <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">JINA_API_KEY</code> and{" "}
-                  <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">GROQ_API_KEY</code> in{" "}
-                  <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">apps/web/.env.local</code>.
+                  {t("chat.setupBody1p1")} <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">:8080</code>{" "}
+                  {t("chat.setupBody1p2")} <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">JINA_API_KEY</code>{" "}
+                  {t("chat.setupBody1p3")} <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">GROQ_API_KEY</code>{" "}
+                  {t("chat.setupBody1p4")} <code className="rounded bg-neutral-100 px-1 py-px font-mono text-[10px]">apps/web/.env.local</code>.
                 </p>
-                <p>
-                  An upload that misbehaves can be deleted and re-uploaded — embeddings are cached, so
-                  the second pass takes seconds.
-                </p>
+                <p>{t("chat.setupBody2")}</p>
               </div>
             </details>
           </section>
@@ -1197,17 +1212,23 @@ export default function ChatPage() {
               <Menu className="size-4" />
             </button>
             <p className="text-[13px] font-medium tracking-[-0.01em] text-neutral-950">
-              Ask FaultFinder
+              {t("chat.askFaultFinder")}
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[11px] font-medium text-neutral-400">
-            <span
-              className={cn("size-1.5 rounded-full", hasManuals ? "bg-[#359462]" : "bg-neutral-300")}
-            />
-            <span className="tabular-nums">
-              {stats?.documents ?? 0} {stats?.documents === 1 ? "manual" : "manuals"} ·{" "}
-              {(stats?.chunks ?? 0).toLocaleString()} chunks
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-2 text-[11px] font-medium text-neutral-400 sm:flex">
+              <span
+                className={cn("size-1.5 rounded-full", hasManuals ? "bg-[#359462]" : "bg-neutral-300")}
+              />
+              <span className="tabular-nums">
+                {stats?.documents ?? 0} {stats?.documents === 1 ? t("chat.manualWord") : t("chat.manualsWord")} ·{" "}
+                {(stats?.chunks ?? 0).toLocaleString()} {t("chat.chunksWord")}
+              </span>
+            </div>
+            {/* The one language control: it re-renders every string on this
+                page AND becomes the language /api/chat answers in. Top of the
+                page, same as the landing page's navbar. */}
+            <LanguageSwitcher variant="chat" />
           </div>
         </header>
 
@@ -1218,12 +1239,11 @@ export default function ChatPage() {
                 {/* Two-tone heading, the same device the landing page's bento
                     cards use — accent line first, dark line under it. */}
                 <h1 className="max-w-[20rem] text-[2rem] font-medium leading-[1.05] tracking-[-0.04em] sm:max-w-lg sm:text-[2.75rem] sm:tracking-[-0.045em]">
-                  <span className="block text-[#17152A]">Turn a cryptic error code</span>
-                  <span className="block text-[#359462]">into a fix.</span>
+                  <span className="block text-[#17152A]">{t("chat.headline1")}</span>
+                  <span className="block text-[#359462]">{t("chat.headline2")}</span>
                 </h1>
                 <p className="mt-4 max-w-[24rem] text-[14px] font-medium leading-[1.55] tracking-[-0.02em] text-[#6D6878] sm:text-[15px]">
-                  Type an error code, a symptom, or a machine name. Every answer comes back with the
-                  meaning, the probable cause, and cited repair steps.
+                  {t("chat.subhead")}
                 </p>
 
                 {!hasManuals ? (
@@ -1233,21 +1253,21 @@ export default function ChatPage() {
                       className="mt-9 inline-flex h-11 items-center gap-2 rounded-full bg-neutral-950 px-6 text-[14px] font-semibold text-white transition-colors hover:bg-neutral-800"
                     >
                       <Upload className="size-4" />
-                      Upload a PDF manual
+                      {t("chat.uploadCta")}
                     </button>
                     <p className="mt-3 text-[12px] text-neutral-400">
-                      Nothing is preloaded — the index starts empty by design.
+                      {t("chat.nothingPreloaded")}
                     </p>
                   </>
                 ) : (
                   <>
                     <div className="mt-10 grid w-full max-w-md grid-cols-2 gap-2.5 sm:grid-cols-4">
                       {[
-                        { label: "Manuals", value: (stats?.documents ?? 0).toLocaleString() },
-                        { label: "Chunks", value: (stats?.chunks ?? 0).toLocaleString() },
-                        { label: "Codes", value: (stats?.faults ?? 0).toLocaleString() },
+                        { label: t("chat.statManuals"), value: (stats?.documents ?? 0).toLocaleString() },
+                        { label: t("chat.statChunks"), value: (stats?.chunks ?? 0).toLocaleString() },
+                        { label: t("chat.statCodes"), value: (stats?.faults ?? 0).toLocaleString() },
                         // A vector dimension is not a quantity — never comma-grouped.
-                        { label: "Dims", value: String(stats?.dims ?? 0) },
+                        { label: t("chat.statDims"), value: String(stats?.dims ?? 0) },
                       ].map((s) => (
                         <div
                           key={s.label}
@@ -1266,7 +1286,7 @@ export default function ChatPage() {
                     {/* Stacked on a narrow screen so four pills of different
                         widths don't read as scattered debris. */}
                     <div className="mt-8 flex w-full max-w-lg flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
-                      {SUGGESTIONS.map((q) => (
+                      {dict.chat.suggestions.map((q) => (
                         <button
                           key={q}
                           onClick={() => handleSubmit(q)}
@@ -1287,7 +1307,6 @@ export default function ChatPage() {
                   message={msg}
                   index={i}
                   onOpenCitation={setOpenCitation}
-                  language={language}
                 />
                 {/* Kept after the fact, collapsed: the answer is the point, but
                     "where did this come from" should never need a rerun. */}
@@ -1342,11 +1361,7 @@ export default function ChatPage() {
                     handleSubmit(input);
                   }
                 }}
-                placeholder={
-                  hasManuals
-                    ? "e.g. E101 on the injection molding machine"
-                    : "Upload a manual first, then ask anything about it"
-                }
+                placeholder={hasManuals ? t("chat.askPlaceholderReady") : t("chat.askPlaceholderEmpty")}
                 disabled={loading}
                 className="max-h-[168px] w-full resize-none bg-transparent px-3 pb-1 pt-2 text-[14.5px] leading-[1.55] tracking-[-0.01em] text-neutral-950 placeholder:text-neutral-400 focus:outline-none disabled:opacity-50"
               />
@@ -1355,7 +1370,7 @@ export default function ChatPage() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={upload.state === "busy"}
-                  title="Upload a PDF manual"
+                  title={t("chat.uploadTitle")}
                   className="flex size-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-40"
                 >
                   <Plus className="size-4" />
@@ -1364,7 +1379,7 @@ export default function ChatPage() {
                   type="button"
                   onClick={startListening}
                   disabled={loading || listening}
-                  title="Voice input"
+                  title={t("chat.voiceInput")}
                   className={cn(
                     "flex size-8 items-center justify-center rounded-full transition-colors",
                     listening
@@ -1375,28 +1390,8 @@ export default function ChatPage() {
                   <Mic className={cn("size-4", listening && "animate-pulse")} />
                 </button>
 
-                {/* Answer language. "Auto" matches the question's script, which
-                    is what a technician who just types in Hindi expects; the
-                    explicit choices exist so a demo never depends on detection. */}
-                <label className="ml-1 inline-flex items-center gap-1.5">
-                  <Languages className="size-3.5 shrink-0 text-neutral-400" />
-                  <span className="sr-only">Answer language</span>
-                  <select
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value as AnswerLanguage)}
-                    className="cursor-pointer rounded-md bg-transparent py-0.5 pr-1 text-[11.5px] font-medium text-neutral-500 transition-colors hover:text-neutral-900 focus:outline-none"
-                    title="Language the answer is written in"
-                  >
-                    {LANGUAGE_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
                 <span className="ml-auto hidden pr-1 text-[10.5px] text-neutral-300 lg:block">
-                  Enter to send · Shift+Enter for a new line
+                  {t("chat.enterToSend")}
                 </span>
 
                 <button
@@ -1414,8 +1409,7 @@ export default function ChatPage() {
             </div>
           </form>
           <p className="mt-2.5 text-center text-[10.5px] text-neutral-400">
-            Answers are retrieved from your loaded manuals and cited by page. Verify before acting on
-            live equipment.
+            {t("chat.answersFooter")}
           </p>
         </div>
       </div>

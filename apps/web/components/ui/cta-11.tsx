@@ -4,6 +4,7 @@ import React, { useSyncExternalStore } from "react";
 import { Star } from "lucide-react";
 import Link from "next/link";
 import { Button } from "./button";
+import { useI18n } from "@/lib/i18n/context";
 
 function useIsLoggedIn() {
   return useSyncExternalStore(
@@ -14,6 +15,7 @@ function useIsLoggedIn() {
 }
 
 export function CTA11() {
+  const { t } = useI18n();
   const isLoggedIn = useIsLoggedIn();
   const stats = { totalManuals: 12, totalQueries: 4800 };
 
@@ -31,19 +33,18 @@ export function CTA11() {
             ))}
           </div>
           <p className="text-xs sm:text-sm font-semibold tracking-wide italic text-neutral-500">
-            Trusted by maintenance teams resolving faults fast
+            {t("cta11.trustedBy")}
           </p>
         </div>
 
         {/* Heading */}
         <h2 className="text-4xl sm:text-5xl md:text-6xl tracking-tight text-neutral-900 max-w-2xl leading-none font-medium">
-          Stop guessing. Find the fix.
+          {t("cta11.heading")}
         </h2>
 
         {/* Paragraph */}
         <p className="text-base sm:text-lg mt-3 md:text-xl text-neutral-500 max-w-lg">
-          Every minute of downtime costs money. Get precise, cited
-          troubleshooting steps pulled from the correct machine manual.
+          {t("cta11.body")}
         </p>
 
         {/* Number Ticker / Metrics */}
@@ -53,7 +54,7 @@ export function CTA11() {
               {stats.totalManuals}
             </p>
             <p className="text-sm font-semibold text-neutral-500 tracking-wider">
-              Manuals Indexed
+              {t("cta11.manualsIndexed")}
             </p>
           </div>
           <div className="text-center">
@@ -61,13 +62,13 @@ export function CTA11() {
               {stats.totalQueries.toLocaleString()}+
             </p>
             <p className="text-sm font-semibold text-neutral-500 tracking-wider">
-              Troubleshooting Queries
+              {t("cta11.troubleshootingQueries")}
             </p>
           </div>
           <div className="text-center">
             <p className="text-4xl text-neutral-900 font-mono">100%</p>
             <p className="text-sm font-semibold text-neutral-500 tracking-wider">
-              Sourced Answers
+              {t("cta11.sourcedAnswers")}
             </p>
           </div>
         </div>
@@ -79,7 +80,7 @@ export function CTA11() {
             className="h-12 w-full sm:w-auto rounded-full bg-neutral-950 px-8 text-sm font-semibold text-white hover:bg-neutral-800 shadow-lg shadow-neutral-950/10 transition duration-200"
           >
             <Link href={isLoggedIn ? "/#demo" : "/#demo"}>
-              Get started free
+              {t("cta11.getStarted")}
             </Link>
           </Button>
           <Button
@@ -88,7 +89,7 @@ export function CTA11() {
             className="h-12 w-full sm:w-auto rounded-full border-neutral-200 bg-white hover:bg-neutral-50 px-8 text-sm font-semibold text-neutral-800 shadow-sm transition duration-200 hover:text-black"
           >
             <Link href="/#demo">
-              View live demo
+              {t("cta11.viewDemo")}
             </Link>
           </Button>
         </div>

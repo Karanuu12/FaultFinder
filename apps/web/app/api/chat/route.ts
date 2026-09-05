@@ -695,6 +695,39 @@ function groqKeys(): string[] {
     .filter(Boolean);
 }
 
+/**
+ * `openai/gpt-oss-*` on Groq is a reasoning model: it spends hidden
+ * "reasoning" tokens (`usage.completion_tokens_details.reasoning_tokens`)
+ * before writing the visible answer, and those tokens count against the same
+ * per-minute/per-day budget as everything else. Measured directly against
+ * this account with the real system prompt and a real single-fact question:
+ *
+ *   reasoning_effort   reasoning_tokens   completion_tokens   total_tokens
+ *   (default/unset)    256                363                 3151
+ *   "low"              53-81              168-181             2956-2969
+ *   "medium"           248                380                 3168
+ *
+ * Unset behaves like "medium", not like a minimum. "low" answered the same
+ * question correctly (right fact, right confidence, right used_sources) at
+ * roughly half the completion-token cost -- on a 200,000 token/day budget,
+ * that is real query headroom, not a rounding difference. Every request that
+ * goes through the fault-index fast path or the answer cache pays none of
+ * this either way; this only affects generation that actually reaches Groq.
+ *
+ * Kept adjustable rather than hardcoded, and scoped to models that are
+ * actually known to accept the parameter: Groq's API rejects an unsupported
+ * value outright (HTTP 400) rather than ignoring it, so sending this to a
+ * model that doesn't understand it could turn a working request into a
+ * failed one. If GROQ_MODEL is ever pointed at something else, this quietly
+ * stops adding the field instead of guessing.
+ */
+function reasoningEffortFor(model: string): { reasoning_effort?: "low" | "medium" | "high" } {
+  if (!model.includes("gpt-oss")) return {};
+  const requested = process.env.GROQ_REASONING_EFFORT;
+  const effort = requested === "low" || requested === "medium" || requested === "high" ? requested : "low";
+  return { reasoning_effort: effort };
+}
+
 function buildContext(hits: ScoredChunk[], promptTokens: number): string {
   let budget = GROQ_TPM_CAP - GROQ_MAX_OUTPUT - GROQ_SAFETY - promptTokens;
   const parts: string[] = [];
@@ -738,10 +771,13 @@ async function answerWithGroq(
     estTokens(system) + historyTurns.reduce((s, h) => s + estTokens(h.content), 0),
   );
 
+  const model = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
+
   const body = JSON.stringify({
-      model: process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
+      model,
       temperature: 0.15,
       max_tokens: GROQ_MAX_OUTPUT,
+      ...reasoningEffortFor(model),
       messages: [
         { role: "system", content: system },
         // Real prior turns, not a paraphrase stuffed into the user message --
