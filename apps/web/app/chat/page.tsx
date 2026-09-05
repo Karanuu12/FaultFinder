@@ -4,6 +4,12 @@ import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import {
+  type AnswerLanguage,
+  LANGUAGE_OPTIONS,
+  SPEECH_TAG,
+  hasDevanagari,
+} from "@/lib/language";
+import {
   ArrowUp,
   Loader2,
   Upload,
@@ -20,6 +26,7 @@ import {
   ArrowUpRight,
   ChevronDown,
   Maximize2,
+  Languages,
 } from "lucide-react";
 
 interface Citation {
@@ -438,7 +445,12 @@ let _currentUtterance: SpeechSynthesisUtterance | null = null;
 let _speakingIndex: number | null = null;
 let _onStateChange: ((i: number | null) => void) | null = null;
 
-export function speakText(text: string, index: number, onStateChange?: (i: number | null) => void) {
+export function speakText(
+  text: string,
+  index: number,
+  onStateChange?: (i: number | null) => void,
+  lang?: string,
+) {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
   // If already speaking this bubble, stop
   if (_speakingIndex === index) {
@@ -455,6 +467,18 @@ export function speakText(text: string, index: number, onStateChange?: (i: numbe
   _onStateChange?.(null);
 
   const utterance = new SpeechSynthesisUtterance(text);
+  // Without this the browser reads Devanagari with an English voice, which
+  // produces noise rather than Hindi. Picking a matching installed voice as
+  // well as setting `lang` is what actually makes Chrome switch.
+  if (lang) {
+    utterance.lang = lang;
+    const base = lang.split("-")[0];
+    const voice = window.speechSynthesis
+      .getVoices()
+      .find((v) => v.lang === lang) ??
+      window.speechSynthesis.getVoices().find((v) => v.lang.startsWith(base));
+    if (voice) utterance.voice = voice;
+  }
   utterance.rate = 0.9;
   utterance.pitch = 1;
   utterance.volume = 1;
@@ -498,10 +522,12 @@ function MessageBubble({
   message,
   index,
   onOpenCitation,
+  language,
 }: {
   message: ChatMessage;
   index: number;
   onOpenCitation: (c: Citation) => void;
+  language: AnswerLanguage;
 }) {
   const isUser = message.role === "user";
   const a = message.structured;
@@ -547,7 +573,18 @@ function MessageBubble({
             </span>
           </span>
           <button
-            onClick={() => speakText(spokenForm(a), index, (i) => setSpeaking(i === index))}
+            onClick={() => {
+              const spoken = spokenForm(a);
+              // Read the ANSWER's script, not the request setting: an "auto"
+              // request that came back in Devanagari still needs a Hindi voice.
+              const tag =
+                language !== "auto"
+                  ? SPEECH_TAG[language]
+                  : hasDevanagari(spoken)
+                    ? SPEECH_TAG.hi
+                    : SPEECH_TAG.en;
+              speakText(spoken, index, (i) => setSpeaking(i === index), tag);
+            }}
             className={cn(
               "ml-auto flex size-7 items-center justify-center rounded-full transition-colors",
               speaking
@@ -675,6 +712,7 @@ export default function ChatPage() {
   const [openTrace, setOpenTrace] = useState<Record<number, boolean>>({});
   const [liveTraceOpen, setLiveTraceOpen] = useState(true);
   const [openCitation, setOpenCitation] = useState<Citation | null>(null);
+  const [language, setLanguage] = useState<AnswerLanguage>("auto");
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -683,7 +721,11 @@ export default function ChatPage() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) { alert("Speech recognition is not supported in this browser."); return; }
     const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
+    // Dictation is script-specific: an en-US recogniser transcribes Hindi
+    // speech as English nonsense rather than failing, so this has to follow
+    // the chosen language. "Auto" can't be resolved before hearing anything,
+    // so it defaults to English.
+    recognition.lang = SPEECH_TAG[language === "auto" ? "en" : language];
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
     recognition.onresult = (event: any) => {
@@ -880,6 +922,7 @@ export default function ChatPage() {
         body: JSON.stringify({
           message: text,
           job_id: jobId,
+          language,
           history: messages.map((m) => ({
             role: m.role,
             content: m.structured ? summarizeForHistory(m.structured) : m.content,
@@ -1240,7 +1283,12 @@ export default function ChatPage() {
 
             {messages.map((msg, i) => (
               <div key={i} className="space-y-2">
-                <MessageBubble message={msg} index={i} onOpenCitation={setOpenCitation} />
+                <MessageBubble
+                  message={msg}
+                  index={i}
+                  onOpenCitation={setOpenCitation}
+                  language={language}
+                />
                 {/* Kept after the fact, collapsed: the answer is the point, but
                     "where did this come from" should never need a rerun. */}
                 {msg.role === "assistant" && msg.trace && msg.trace.length > 0 && (
@@ -1327,7 +1375,27 @@ export default function ChatPage() {
                   <Mic className={cn("size-4", listening && "animate-pulse")} />
                 </button>
 
-                <span className="ml-auto hidden pr-1 text-[10.5px] text-neutral-300 sm:block">
+                {/* Answer language. "Auto" matches the question's script, which
+                    is what a technician who just types in Hindi expects; the
+                    explicit choices exist so a demo never depends on detection. */}
+                <label className="ml-1 inline-flex items-center gap-1.5">
+                  <Languages className="size-3.5 shrink-0 text-neutral-400" />
+                  <span className="sr-only">Answer language</span>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as AnswerLanguage)}
+                    className="cursor-pointer rounded-md bg-transparent py-0.5 pr-1 text-[11.5px] font-medium text-neutral-500 transition-colors hover:text-neutral-900 focus:outline-none"
+                    title="Language the answer is written in"
+                  >
+                    {LANGUAGE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <span className="ml-auto hidden pr-1 text-[10.5px] text-neutral-300 lg:block">
                   Enter to send · Shift+Enter for a new line
                 </span>
 

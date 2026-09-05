@@ -15,10 +15,39 @@ import path from "node:path";
 
 let cached: string | null = null;
 
+/**
+ * The skill file is sent on EVERY request, and Groq's free tier caps this
+ * account at 8,000 tokens per minute and 200,000 per day. Measured against
+ * Groq's own `prompt_tokens`, the file costs ~3,000 of those 8,000 before a
+ * single line of manual text is added -- which is why only about one query per
+ * minute was getting through.
+ *
+ * So the file has two audiences and only one of them is billed. Whoever
+ * maintains it needs the rationale: why a rule exists, which stage enforces
+ * it, what broke without it. The model needs the imperative rule and nothing
+ * else. Passages that exist purely to explain are wrapped in
+ * `<!-- prompt:skip -->` / `<!-- /prompt:skip -->` and dropped here, along with
+ * ordinary HTML comments.
+ *
+ * This keeps hallucination-skill.md the single source of truth -- there is no
+ * second, silently diverging "short version" to maintain -- while cutting what
+ * each request actually pays for.
+ */
+function forPrompt(markdown: string): string {
+  return markdown
+    .replace(/<!--\s*prompt:skip\s*-->[\s\S]*?<!--\s*\/prompt:skip\s*-->/g, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    // Collapse the blank lines the removals leave behind.
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function getHallucinationSkill(): string {
   if (cached) return cached;
   try {
-    cached = readFileSync(path.join(process.cwd(), "lib/prompts/hallucination-skill.md"), "utf8");
+    cached = forPrompt(
+      readFileSync(path.join(process.cwd(), "lib/prompts/hallucination-skill.md"), "utf8"),
+    );
   } catch (err) {
     console.warn(
       "[skill] could not read hallucination-skill.md, using embedded fallback:",

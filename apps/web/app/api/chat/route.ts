@@ -21,6 +21,12 @@ import { NextRequest } from "next/server";
 import { getStore, getEmbedder } from "@/lib/rag-index";
 import { getHallucinationSkill } from "@/lib/prompts/skill";
 import { startTrace, traceStep, endTrace } from "@/lib/query-progress";
+import {
+  type AnswerLanguage,
+  languageInstruction,
+  languageLabel,
+  hasDevanagari,
+} from "@/lib/language";
 import type { ScoredChunk } from "@timmo/rag/store/local-store";
 import type { FaultRecord } from "@timmo/rag/doc/model";
 
@@ -277,6 +283,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { message, machine: explicitMachine } = body as { message?: string; machine?: string };
     jobId = typeof body?.job_id === "string" ? body.job_id : undefined;
+    const language: AnswerLanguage = ["auto", "en", "hi", "mr"].includes(body?.language)
+      ? body.language
+      : "auto";
     const history = sanitizeHistory(body?.history);
 
     if (!message || typeof message !== "string" || !message.trim()) {
@@ -303,6 +312,30 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // --- Small talk: answered before anything is spent ---------------------
+    if (SMALL_TALK.test(message.trim())) {
+      const greetLang =
+        language === "hi" || language === "mr"
+          ? language
+          : language === "auto" && hasDevanagari(message)
+            ? "hi"
+            : "en";
+      traceStep(jobId, "Recognised a greeting", "no retrieval, no generation, 0 tokens");
+      endTrace(jobId);
+      return Response.json({
+        answer: {
+          meaning: GREETING[greetLang],
+          probable_causes: [],
+          corrective_action: [],
+          citations: [],
+          confidence: "high",
+          refusals: [],
+        },
+        sources: [],
+        fast_path: "small-talk",
+      });
+    }
+
     // --- Conversation memory: resolve machine + carried error code --------
     const candidates = machineCandidates(store);
     const resolvedMachine = resolveMachineScope(message, history, explicitMachine, candidates);
@@ -311,6 +344,7 @@ export async function POST(request: NextRequest) {
       jobId,
       "Read the question",
       [
+        languageLabel(language, message),
         messageCodes.length ? `code ${messageCodes.join(", ")}` : "no explicit code",
         resolvedMachine
           ? `scoped to ${candidates.find((c) => c.machineId === resolvedMachine)?.label ?? resolvedMachine}`
@@ -368,7 +402,17 @@ export async function POST(request: NextRequest) {
     // only paraphrase what's already exact. Only taken when the record is
     // complete (has meaning AND steps); anything thinner falls through to the
     // full pipeline so we never trade an answer for speed.
-    if (messageCodes.length === 1 && !history.length) {
+    // The fast path returns the manual's own English wording verbatim, which is
+    // exactly why it cannot hallucinate -- and exactly why it can't serve a
+    // Hindi or Marathi question. When a non-English answer is wanted we give up
+    // that determinism deliberately and route through generation so the reply
+    // is in the technician's language; the answer is still grounded in the same
+    // retrieved manual text, just paraphrased rather than quoted.
+    const wantsNonEnglish = language === "hi" || language === "mr" || (language === "auto" && hasDevanagari(message));
+    if (wantsNonEnglish && messageCodes.length === 1 && !history.length) {
+      traceStep(jobId, "Skipped the fault-index fast path", "it answers in the manual's language; generating instead");
+    }
+    if (!wantsNonEnglish && messageCodes.length === 1 && !history.length) {
       const candidatesForCode = store.faultsForCode(messageCodes[0]);
       const scoped = resolvedMachine
         ? candidatesForCode.filter((r) => r.machineId === resolvedMachine)
@@ -386,6 +430,30 @@ export async function POST(request: NextRequest) {
           sources: [],
           resolved_machine: record.machineId,
           fast_path: "fault-index",
+        });
+      }
+    }
+
+    // --- Answer cache: an identical repeat costs nothing --------------------
+    // Placed after machine resolution so the key reflects the scope actually
+    // used, and skipped once a conversation is under way, since a follow-up's
+    // meaning depends on turns the key does not capture.
+    const s = store.stats;
+    const fingerprint = `${s.documents}:${s.chunks}:${s.faults}`;
+    const cacheKey = answerCacheKey(message, resolvedMachine, language, fingerprint);
+    if (!history.length) {
+      const hit = ANSWER_CACHE.get(cacheKey);
+      if (hit) {
+        // Refresh recency for the LRU.
+        ANSWER_CACHE.delete(cacheKey);
+        ANSWER_CACHE.set(cacheKey, hit);
+        traceStep(jobId, "Served from the answer cache", "identical question, same index — 0 tokens");
+        endTrace(jobId);
+        return Response.json({
+          answer: hit.answer,
+          sources: [],
+          resolved_machine: hit.resolved_machine,
+          fast_path: "answer-cache",
         });
       }
     }
@@ -440,9 +508,21 @@ export async function POST(request: NextRequest) {
 
     // --- Answer ---------------------------------------------------------
     const groqKey = process.env.GROQ_API_KEY;
-    const answer = groqKey
-      ? await answerWithGroq(message, hits, groqKey, history)
-      : answerFromRetrieval(hits);
+    const generated = groqKey
+      ? await answerWithGroq(message, hits, groqKey, history, language)
+      : { answer: answerFromRetrieval(hits), ok: false };
+    const answer = generated.answer;
+
+    // Only a real generation is worth replaying. Caching a rate-limited
+    // fallback would serve raw manual text as though it were an answer, for as
+    // long as the index stays unchanged.
+    if (generated.ok && !history.length) {
+      if (ANSWER_CACHE.size >= ANSWER_CACHE_MAX) {
+        const oldest = ANSWER_CACHE.keys().next().value;
+        if (oldest !== undefined) ANSWER_CACHE.delete(oldest);
+      }
+      ANSWER_CACHE.set(cacheKey, { answer, resolved_machine: resolvedMachine });
+    }
     // Refusals are surfaced here too: an answer that fell back to raw retrieved
     // text reports "0 steps", which on its own reads like the pipeline simply
     // found nothing rather than like generation failing.
@@ -514,31 +594,162 @@ function answerFromRetrieval(
 }
 
 /** With a key: the LLM phrases the answer, sees real conversation history, but citations come from chunk ids. */
+/**
+ * ~3.6 chars/token, the same ratio the chunker and embedder use. Measured
+ * against Groq's reported `prompt_tokens` the real ratio for this prompt is
+ * ~4.3, so this deliberately over-estimates — the failure mode of guessing low
+ * is a rejected request, and of guessing high is a slightly smaller context.
+ */
+function estTokens(text: string): number {
+  return Math.ceil(text.length / 3.6);
+}
+
+/**
+ * Greetings and acknowledgements, matched whole-message only.
+ *
+ * "hi" was costing a full pipeline run: a Jina query embedding, a hybrid
+ * search, and ~3,000 tokens of system prompt sent to Groq to be told there is
+ * no fault code in it. On a 200,000 token-per-day budget that is roughly 1/60th
+ * of a day's capacity spent on a word that contains no question.
+ *
+ * Anchored at both ends and deliberately short, so "hi, what does OCF mean" is
+ * NOT small talk and still runs the full pipeline.
+ */
+const SMALL_TALK =
+  /^(hi|hii+|hey+|hello+|yo|hola|namaste|namaskar|thanks?|thank\s*you|thx|ty|ok(ay)?|k|cool|nice|great|awesome|got\s*it|bye|goodbye|see\s*ya|good\s*(morning|afternoon|evening|night)|नमस्ते|नमस्कार|धन्यवाद|शुक्रिया|ठीक\s*है|ओके)[\s!.?,…]*$/i;
+
+/** Canned, so a greeting costs nothing even when answered in the user's language. */
+const GREETING: Record<"en" | "hi" | "mr", string> = {
+  en: "Ask me about a machine fault — an error code (like OCF or F0001), a symptom, or a machine name. Every answer is drawn from the manuals you've uploaded and cited by page.",
+  hi: "मुझसे मशीन की खराबी के बारे में पूछें — एरर कोड (जैसे OCF या F0001), कोई लक्षण, या मशीन का नाम। हर उत्तर आपके अपलोड किए गए मैनुअल से लिया जाता है और पेज नंबर के साथ दिया जाता है।",
+  mr: "मला मशीनच्या बिघाडाबद्दल विचारा — एरर कोड (उदा. OCF किंवा F0001), एखादे लक्षण, किंवा मशीनचे नाव. प्रत्येक उत्तर तुम्ही अपलोड केलेल्या मॅन्युअलमधून घेतले जाते आणि पृष्ठ क्रमांकासह दिले जाते.",
+};
+
+/**
+ * Identical questions answered again cost nothing.
+ *
+ * Rehearsing a demo means asking the same five questions twenty times. Without
+ * this, that is twenty full generations against a daily cap that allows roughly
+ * thirty. Keyed on the index fingerprint as well as the question, so uploading
+ * or deleting a manual invalidates every cached answer rather than serving a
+ * stale one. Only successful generations are cached — a rate-limited fallback
+ * must never be replayed as if it were an answer.
+ */
+const ANSWER_CACHE = new Map<string, { answer: unknown; resolved_machine?: string }>();
+const ANSWER_CACHE_MAX = 200;
+
+function answerCacheKey(
+  message: string,
+  machine: string | undefined,
+  language: AnswerLanguage,
+  fingerprint: string,
+): string {
+  return [
+    message.toLowerCase().replace(/\s+/g, " ").trim(),
+    machine ?? "-",
+    language,
+    fingerprint,
+  ].join("|");
+}
+
+/**
+ * Groq's free tier caps TOKENS PER MINUTE per model, and both models available
+ * on this account are capped at 8,000 (read straight off
+ * `x-ratelimit-limit-tokens`). A single request can therefore exceed the whole
+ * minute's budget on its own -- which is exactly what was happening: the system
+ * prompt is ~3,600 tokens, eight retrieved chunks at the 90th percentile are
+ * ~3,800 more, plus the output reservation. That is ~9,000 against a cap of
+ * 8,000, so the request 429s before it is ever throttled for frequency.
+ *
+ * Every "rate limit" seen while building this was that, not query volume.
+ *
+ * So the context is filled to a measured budget instead of blindly sending
+ * topK. Hits are added in rank order -- retrieval still returns 8 and the
+ * citation list is still built from all of them -- and the first one that does
+ * not fit is truncated into whatever space remains. The highest-ranked
+ * evidence is therefore always present and complete, and the request cannot
+ * exceed the cap regardless of how large the retrieved chunks happen to be.
+ */
+const GROQ_TPM_CAP = Number(process.env.GROQ_TPM_CAP ?? 8000);
+const GROQ_MAX_OUTPUT = 900;
+/** Headroom for the JSON schema line, role overhead, and estimator error. */
+const GROQ_SAFETY = 500;
+
+/**
+ * Groq's free tier caps this account at 8,000 tokens per minute. A grounded
+ * answer costs ~5,000 of them — the system prompt is ~2,700 before any manual
+ * text is added — so a single key allows roughly ONE substantive question per
+ * minute. During a live demo that is the difference between answering the
+ * judge's second question and showing them a rate-limit fallback.
+ *
+ * The prompt cannot be shrunk far enough to fix this without deleting real
+ * hallucination rules, which is the wrong trade for this product. So
+ * GROQ_API_KEY accepts a comma-separated list instead: each key carries its
+ * own quota, and a 429 fails over to the next rather than degrading the
+ * answer. One key still works exactly as before.
+ */
+function groqKeys(): string[] {
+  return (process.env.GROQ_API_KEY ?? "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
+}
+
+function buildContext(hits: ScoredChunk[], promptTokens: number): string {
+  let budget = GROQ_TPM_CAP - GROQ_MAX_OUTPUT - GROQ_SAFETY - promptTokens;
+  const parts: string[] = [];
+
+  hits.forEach((h, i) => {
+    if (budget <= 0) return;
+    const head = `[S${i + 1}] ${h.sectionPath.join(" › ")} (page ${h.pageLabel})\n`;
+    const headCost = estTokens(head);
+    if (budget - headCost < 60) return; // no room for meaningful body
+    const bodyBudgetChars = Math.floor((budget - headCost) * 3.6);
+    const body =
+      h.text.length <= bodyBudgetChars ? h.text : `${h.text.slice(0, bodyBudgetChars)}…[truncated]`;
+    parts.push(head + body);
+    budget -= headCost + estTokens(body);
+  });
+
+  // A budget so tight that nothing fit would send empty context and invite the
+  // model to answer from nothing -- send the top hit clipped instead.
+  if (parts.length === 0 && hits.length) {
+    const h = hits[0];
+    parts.push(`[S1] ${h.sectionPath.join(" › ")} (page ${h.pageLabel})\n${h.text.slice(0, 2000)}`);
+  }
+  return parts.join("\n\n");
+}
+
 async function answerWithGroq(
   message: string,
   hits: ScoredChunk[],
   apiKey: string,
   history: HistoryTurn[] = [],
+  language: AnswerLanguage = "auto",
 ) {
-  const context = hits
-    .map((h, i) => `[S${i + 1}] ${h.sectionPath.join(" › ")} (page ${h.pageLabel})\n${h.text}`)
-    .join("\n\n");
+  // Stated in the system message rather than the user turn: as a preference
+  // buried before the output schema it was simply ignored, because the source
+  // excerpts are English and the model followed them.
+  const langRule = languageInstruction(language, message);
+  const system = langRule ? `${getHallucinationSkill()}\n\n${langRule}` : getHallucinationSkill();
+  const historyTurns = history.slice(-6);
+  const context = buildContext(
+    hits,
+    estTokens(system) + historyTurns.reduce((s, h) => s + estTokens(h.content), 0),
+  );
 
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
+  const body = JSON.stringify({
+      model: process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
       temperature: 0.15,
-      max_tokens: 1600,
+      max_tokens: GROQ_MAX_OUTPUT,
       messages: [
-        { role: "system", content: getHallucinationSkill() },
+        { role: "system", content: system },
         // Real prior turns, not a paraphrase stuffed into the user message --
         // this is what lets the model correctly read an elliptical follow-up
         // ("and what if that doesn't fix it?") as a continuation, while the
         // skill prompt above still requires every CLAIM to be re-grounded in
         // this turn's numbered excerpts, not just carried from a past turn.
-        ...history.slice(-6).map((h) => ({ role: h.role, content: h.content })),
+        ...historyTurns.map((h) => ({ role: h.role, content: h.content })),
         {
           role: "user",
           content:
@@ -548,16 +759,36 @@ async function answerWithGroq(
             `"confidence":"high|medium|low","refusals":[]}`,
         },
       ],
-    }),
   });
 
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
+  // Try each key in turn; a key that is out of quota fails over rather than
+  // degrading the answer. `apiKey` is the first key and is kept as the
+  // parameter so the call site is unchanged.
+  const keys = groqKeys();
+  const ordered = keys.length ? keys : [apiKey];
+  let res: Response | undefined;
+  for (let i = 0; i < ordered.length; i++) {
+    res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ordered[i]}` },
+      body,
+    });
+    if (res.status !== 429) break;
+    if (i < ordered.length - 1) {
+      console.warn(`[groq] key ${i + 1}/${ordered.length} rate-limited, failing over`);
+    }
+  }
+
+  if (!res || !res.ok) {
+    const detail = res ? await res.text().catch(() => "") : "no response";
     console.warn("Groq failed, falling back to retrieval:", detail.slice(0, 200));
-    return answerFromRetrieval(
-      hits,
-      `The answer-generation model returned an error (${res.status}), so this is the retrieved manual text rather than a generated answer.`,
-    );
+    return {
+      ok: false,
+      answer: answerFromRetrieval(
+        hits,
+        `The answer-generation model returned an error (${res?.status ?? "no response"})${ordered.length > 1 ? ` on all ${ordered.length} keys` : ""}, so this is the retrieved manual text rather than a generated answer.`,
+      ),
+    };
   }
 
   const raw = await res.json();
@@ -565,10 +796,13 @@ async function answerWithGroq(
   const start = content.indexOf("{");
   const end = content.lastIndexOf("}");
   if (start === -1 || end <= start) {
-    return answerFromRetrieval(
-      hits,
-      "The answer-generation model's response wasn't valid JSON, so this is the retrieved manual text rather than a generated answer.",
-    );
+    return {
+      ok: false,
+      answer: answerFromRetrieval(
+        hits,
+        "The answer-generation model's response wasn't valid JSON, so this is the retrieved manual text rather than a generated answer.",
+      ),
+    };
   }
 
   try {
@@ -580,6 +814,8 @@ async function answerWithGroq(
     const fallbackHits = citedHits.length ? citedHits : hits.slice(0, 3);
 
     return {
+      ok: true,
+      answer: {
       error_code: parsed.error_code || undefined,
       meaning: String(parsed.meaning ?? ""),
       probable_causes: Array.isArray(parsed.probable_causes) ? parsed.probable_causes : [],
@@ -588,11 +824,15 @@ async function answerWithGroq(
       images: imagesFor(fallbackHits),
       confidence: ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "low",
       refusals: Array.isArray(parsed.refusals) ? parsed.refusals : [],
+      },
     };
   } catch {
-    return answerFromRetrieval(
-      hits,
-      "The answer-generation model's response couldn't be parsed as the expected JSON shape, so this is the retrieved manual text rather than a generated answer.",
-    );
+    return {
+      ok: false,
+      answer: answerFromRetrieval(
+        hits,
+        "The answer-generation model's response couldn't be parsed as the expected JSON shape, so this is the retrieved manual text rather than a generated answer.",
+      ),
+    };
   }
 }
