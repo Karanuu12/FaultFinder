@@ -81,42 +81,65 @@ interface IndexStats {
 }
 
 /**
- * Confidence is the one place colour carries meaning rather than decoration,
- * so it uses the landing page's own accent hues instead of a fresh palette.
+ * The landing page's bento palette, quoted rather than reinvented: a very
+ * light tinted ground, a slightly deeper border, and one saturated hue for the
+ * heading. Using the same five families here is what makes the two pages read
+ * as one product instead of two.
+ *
+ * Each family is also assigned by MEANING, not rotation -- causes are always
+ * amber, the fix is always green, diagrams violet, sources sky -- so the colour
+ * is a wayfinding cue a technician can learn, not decoration.
  */
-const CONFIDENCE_STYLE: Record<CitedAnswer["confidence"], { dot: string; text: string }> = {
-  high: { dot: "bg-[#359462]", text: "text-[#2f7c53]" },
-  medium: { dot: "bg-[#c98a2b]", text: "text-[#a8711f]" },
-  low: { dot: "bg-[#c64e27]", text: "text-[#b04520]" },
+const TONE = {
+  /** #7B35F0 — identity, the error code itself */
+  code: { bg: "bg-purple-100/70", border: "border-purple-300/50", ink: "text-[#5f24c4]" },
+  /** #c64e27 — diagnosis, "what might be wrong" */
+  causes: { bg: "bg-[#fff2df]", border: "border-[#f0d9b8]/80", ink: "text-[#c64e27]" },
+  /** #359462 — the fix, "what to do" */
+  action: { bg: "bg-[#eeffe8]", border: "border-[#cfe9c8]", ink: "text-[#2f7c53]" },
+  /** #5e2ac4 — figures pulled from the manual */
+  diagram: { bg: "bg-[#f2eeff]", border: "border-[#ddd0ff]/80", ink: "text-[#5e2ac4]" },
+  /** #0586d2 — provenance */
+  source: { bg: "bg-sky-100/50", border: "border-sky-200/70", ink: "text-[#0570b0]" },
+} as const;
+
+type ToneName = keyof typeof TONE;
+
+/**
+ * Confidence is the one place colour carries a judgement rather than a
+ * category, so it reuses the same hues at their most saturated.
+ */
+const CONFIDENCE_STYLE: Record<CitedAnswer["confidence"], { dot: string; text: string; bg: string }> = {
+  high: { dot: "bg-[#359462]", text: "text-[#2f7c53]", bg: "bg-[#eeffe8]" },
+  medium: { dot: "bg-[#c98a2b]", text: "text-[#a8711f]", bg: "bg-[#fff2df]" },
+  low: { dot: "bg-[#c64e27]", text: "text-[#b04520]", bg: "bg-[#ffeee7]" },
 };
 
-/** Small-caps section label. One typographic device, used consistently. */
-function SectionLabel({ children }: { children: React.ReactNode }) {
+/** Small-caps section label. One typographic device, tinted by section. */
+function SectionLabel({ tone, children }: { tone: ToneName; children: React.ReactNode }) {
   return (
-    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+    <p className={cn("text-[10px] font-semibold uppercase tracking-[0.14em]", TONE[tone].ink)}>
       {children}
     </p>
   );
 }
 
 /**
- * The model emits per-claim source references inline as 【S1】. Rendered raw
+ * The model emits per-claim source references inline, and is inconsistent
+ * about the bracket style, so both 【S1】 and [S1] are matched. Rendered raw
  * they read as garbled output; dropped entirely we would lose the one thing
- * that ties an individual sentence to a page. So they are parsed into
- * superscript chips carrying the actual page number, hoverable for the
- * section path -- the citation survives and stops looking like a glitch.
- */
-/**
- * The model is inconsistent about the bracket style, so both are matched. The
- * square-bracket form is deliberately narrow -- `S` followed only by digits --
- * because manuals are full of genuine bracketed parameter names ([Settings],
- * [Motor control], [Fault Reset Assign]) that must survive untouched. Anything
- * A marker that points past the end of the citation list means the model
+ * that ties an individual sentence to a page. So they become superscript chips
+ * carrying the real page number, hoverable for the section path.
+ *
+ * The square-bracket form is deliberately narrow -- `S` followed only by
+ * digits -- because manuals are full of genuine bracketed parameter names
+ * ([Settings], [Motor control], [Fault Reset Assign]) that must survive
+ * untouched.
+ *
+ * A marker pointing past the end of the citation list means the model
  * referenced a source that was not actually returned -- worth flagging, not
  * hiding, on a product whose whole claim is that nothing is asserted without a
- * page behind it. Text that merely looks like a marker but resolves to nothing
- * numeric is left exactly as written, so a real parameter name is never
- * silently swallowed.
+ * page behind it.
  */
 // Built per call rather than shared: a /g regex carries a mutable lastIndex,
 // and one instance reused across renders would skip matches unpredictably.
@@ -139,7 +162,7 @@ function CitedText({ text, citations }: { text: string; citations: Citation[] })
         <sup
           key={`${m.index}-c`}
           title={`${citationLabel(cite.title)} — ${cite.section}`}
-          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-neutral-100 px-1 py-px align-baseline text-[9.5px] font-semibold tabular-nums text-neutral-500"
+          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-sky-100/70 px-1 py-px align-baseline text-[9.5px] font-semibold tabular-nums text-[#0570b0]"
         >
           p.{cite.page}
         </sup>
@@ -147,7 +170,7 @@ function CitedText({ text, citations }: { text: string; citations: Citation[] })
         <sup
           key={`${m.index}-c`}
           title="The model referenced a source that was not returned with this answer — treat this sentence as unverified."
-          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-[#c98a2b]/12 px-1 py-px align-baseline text-[9.5px] font-semibold text-[#a8711f]"
+          className="ml-0.5 inline-flex -translate-y-px items-center rounded-[5px] bg-[#fff2df] px-1 py-px align-baseline text-[9.5px] font-semibold text-[#c64e27]"
         >
           unverified
         </sup>
@@ -184,14 +207,21 @@ function Diagrams({ images }: { images: string[] }) {
   const anyUsable = candidates.some((_, i) => usable[i]);
 
   return (
-    <div className={cn("space-y-2.5", !anyUsable && "hidden")}>
-      <SectionLabel>Diagrams from the manual</SectionLabel>
+    <div
+      className={cn(
+        "space-y-3 rounded-2xl border p-4",
+        TONE.diagram.bg,
+        TONE.diagram.border,
+        !anyUsable && "hidden",
+      )}
+    >
+      <SectionLabel tone="diagram">Diagrams from the manual</SectionLabel>
       <div className="grid grid-cols-2 gap-2.5">
         {candidates.map((img, i) => (
           <div
             key={i}
             className={cn(
-              "overflow-hidden rounded-2xl border border-neutral-200/80 bg-neutral-50 p-1.5",
+              "overflow-hidden rounded-xl border border-[#ddd0ff]/70 bg-white p-1.5",
               !usable[i] && "hidden",
             )}
           >
@@ -307,17 +337,28 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
         {/* Header — code, confidence, listen. Everything identifying, one row. */}
         <div className="flex items-center gap-3 border-b border-neutral-100 px-5 py-3 sm:px-7">
           {a.error_code ? (
-            <span className="font-mono text-[13px] font-semibold tracking-[-0.01em] text-neutral-950">
+            <span
+              className={cn(
+                "rounded-full border px-2.5 py-1 font-mono text-[12px] font-semibold tracking-[-0.01em]",
+                TONE.code.bg,
+                TONE.code.border,
+                TONE.code.ink,
+              )}
+            >
               {a.error_code}
             </span>
           ) : (
             <span className="text-[13px] font-medium tracking-[-0.01em] text-neutral-950">Answer</span>
           )}
-          <span className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              "flex items-center gap-1.5 rounded-full px-2.5 py-1",
+              confidence.bg,
+              confidence.text,
+            )}
+          >
             <span className={cn("size-1.5 rounded-full", confidence.dot)} />
-            <span className={cn("text-[11px] font-medium", confidence.text)}>
-              {a.confidence} confidence
-            </span>
+            <span className="text-[11px] font-semibold">{a.confidence} confidence</span>
           </span>
           <button
             onClick={() => speakText(spokenForm(a), index, (i) => setSpeaking(i === index))}
@@ -335,7 +376,7 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
 
         <div className="space-y-6 px-5 py-5 sm:px-7 sm:py-6">
           {a.refusals.length > 0 && (
-            <div className="flex items-start gap-2.5 rounded-2xl border border-[#f0d9b8]/80 bg-[#fff8ef] px-4 py-3 text-[13px] leading-[1.55] text-[#8a5a1e]">
+            <div className="flex items-start gap-2.5 rounded-2xl border border-[#f0d9b8]/80 bg-[#fff2df] px-4 py-3.5 text-[13px] leading-[1.55] text-[#8a5a1e]">
               <AlertCircle className="mt-px size-4 shrink-0" />
               <div className="space-y-1">
                 {a.refusals.map((r, i) => (
@@ -353,15 +394,15 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
           )}
 
           {a.probable_causes.length > 0 && (
-            <div className="space-y-2.5">
-              <SectionLabel>Probable causes</SectionLabel>
-              <ul className="space-y-1.5">
+            <div className={cn("space-y-3 rounded-2xl border p-4", TONE.causes.bg, TONE.causes.border)}>
+              <SectionLabel tone="causes">Probable causes</SectionLabel>
+              <ul className="space-y-2">
                 {a.probable_causes.map((c, i) => (
                   <li
                     key={i}
-                    className="flex items-start gap-2.5 text-[14px] leading-[1.55] text-[#6D6878]"
+                    className="flex items-start gap-2.5 text-[14px] leading-[1.55] text-[#7a5236]"
                   >
-                    <span className="mt-[9px] size-1 shrink-0 rounded-full bg-neutral-300" />
+                    <span className="mt-[8px] size-1.5 shrink-0 rounded-full bg-[#e0a15f]" />
                     <span>
                       <CitedText text={c} citations={a.citations} />
                     </span>
@@ -372,17 +413,15 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
           )}
 
           {a.corrective_action.length > 0 && (
-            <div className="space-y-3">
-              <SectionLabel>Corrective action</SectionLabel>
-              {/* Numerals in a quiet gutter rather than coloured pucks: reads as
-                  a procedure, and stays legible at any step count. */}
+            <div className={cn("space-y-3 rounded-2xl border p-4", TONE.action.bg, TONE.action.border)}>
+              <SectionLabel tone="action">Corrective action</SectionLabel>
               <ol className="space-y-2.5">
                 {a.corrective_action.map((s) => (
-                  <li key={s.step} className="flex gap-3.5">
-                    <span className="w-4 shrink-0 text-right text-[13px] font-semibold leading-[1.55] tabular-nums text-neutral-300">
+                  <li key={s.step} className="flex gap-3">
+                    <span className="mt-px flex size-[19px] shrink-0 items-center justify-center rounded-full bg-[#359462] text-[10px] font-bold tabular-nums text-white">
                       {s.step}
                     </span>
-                    <span className="text-[14px] leading-[1.55] text-[#3d3a49]">
+                    <span className="text-[14px] leading-[1.55] text-[#2c4a38]">
                       <CitedText text={s.action} citations={a.citations} />
                     </span>
                   </li>
@@ -397,20 +436,24 @@ function MessageBubble({ message, index }: { message: ChatMessage; index: number
         {/* Citations live in a footer band: always present, never competing
             with the answer for attention, always findable. */}
         {a.citations.length > 0 && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-neutral-100 bg-neutral-50/70 px-5 py-3 sm:px-7">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              Sources
-            </span>
+          <div
+            className={cn(
+              "flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t px-5 py-3.5 sm:px-7",
+              TONE.source.bg,
+              "border-sky-200/60",
+            )}
+          >
+            <SectionLabel tone="source">Sources</SectionLabel>
             {a.citations.map((c, i) => (
               <span
                 key={i}
                 title={c.section}
-                className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white px-2.5 py-1 text-[11px] font-medium text-neutral-600"
+                className="inline-flex items-center gap-1.5 rounded-full border border-sky-200/70 bg-white px-2.5 py-1 text-[11px] font-medium text-[#0570b0]"
               >
-                <FileText className="size-3 text-neutral-400" />
+                <FileText className="size-3 text-sky-400" />
                 {citationLabel(c.title)}
-                <span className="text-neutral-300">·</span>
-                <span className="tabular-nums text-neutral-500">p.{c.page}</span>
+                <span className="text-sky-300">·</span>
+                <span className="tabular-nums font-semibold">p.{c.page}</span>
               </span>
             ))}
           </div>
@@ -426,6 +469,8 @@ const SUGGESTIONS = [
   "E204 on the Press-2000",
   "b005 on powerflex",
 ];
+
+const SUGGESTION_TONES: ToneName[] = ["code", "source", "action", "causes"];
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -701,10 +746,8 @@ export default function ChatPage() {
           {/* Manuals */}
           <section>
             <div className="mb-2.5 flex items-baseline gap-2 px-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                Manuals
-              </p>
-              <span className="ml-auto text-[11px] font-medium tabular-nums text-neutral-400">
+              <SectionLabel tone="code">Manuals</SectionLabel>
+              <span className="ml-auto rounded-full bg-purple-100/70 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-[#5f24c4]">
                 {stats?.documents ?? 0}
               </span>
             </div>
@@ -715,12 +758,23 @@ export default function ChatPage() {
                   Nothing indexed yet. Upload a PDF manual to begin.
                 </p>
               )}
-              {documents.map((doc) => (
+              {documents.map((doc, i) => {
+                const tone = SUGGESTION_TONES[i % SUGGESTION_TONES.length];
+                return (
                 <div
                   key={doc.document_id}
                   className="group flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-colors hover:bg-neutral-50"
                 >
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-neutral-100 text-neutral-500">
+                  {/* Each manual keeps a stable colour so it stays recognisable
+                      here and wherever else it is listed. */}
+                  <div
+                    className={cn(
+                      "flex size-8 shrink-0 items-center justify-center rounded-[10px] border",
+                      TONE[tone].bg,
+                      TONE[tone].border,
+                      TONE[tone].ink,
+                    )}
+                  >
                     <FileText className="size-3.5" />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -745,7 +799,8 @@ export default function ChatPage() {
                     )}
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <label
@@ -753,7 +808,7 @@ export default function ChatPage() {
                 "mt-2 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-2xl border border-dashed px-3 py-3 text-[12px] font-medium transition",
                 upload.state === "busy"
                   ? "cursor-wait border-neutral-200 bg-neutral-50 text-neutral-400"
-                  : "border-neutral-300 text-neutral-500 hover:border-neutral-950 hover:text-neutral-950",
+                  : "border-[#cfe9c8] bg-[#eeffe8]/60 text-[#2f7c53] hover:border-[#359462] hover:bg-[#eeffe8]",
               )}
             >
               {upload.state === "busy" ? (
@@ -792,7 +847,7 @@ export default function ChatPage() {
                 {upload.state === "busy" && (
                   <div className="h-1 w-full overflow-hidden rounded-full bg-neutral-200">
                     <div
-                      className="h-full rounded-full bg-neutral-950 transition-[width] duration-500 ease-out"
+                      className="h-full rounded-full bg-gradient-to-r from-[#0586d2] to-[#359462] transition-[width] duration-500 ease-out"
                       style={{ width: `${uploadPct}%` }}
                     />
                   </div>
@@ -801,10 +856,10 @@ export default function ChatPage() {
                   className={cn(
                     "flex items-start gap-2 rounded-2xl px-3 py-2.5 text-[11px] leading-[1.5]",
                     upload.state === "error"
-                      ? "bg-[#c64e27]/10 text-[#a8401f]"
+                      ? "bg-[#ffeee7] text-[#a8401f]"
                       : upload.state === "done"
-                        ? "bg-[#359462]/10 text-[#2f7c53]"
-                        : "bg-neutral-100 text-neutral-600",
+                        ? "bg-[#eeffe8] text-[#2f7c53]"
+                        : "bg-sky-100/60 text-[#0570b0]",
                   )}
                 >
                   {upload.state === "done" && <CheckCircle2 className="mt-px size-3.5 shrink-0" />}
@@ -821,20 +876,20 @@ export default function ChatPage() {
 
           {/* Pipeline — a definition list, not four boxes. */}
           <section>
-            <p className="mb-2.5 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              Pipeline
-            </p>
-            <dl className="overflow-hidden rounded-2xl border border-neutral-200/70">
+            <div className="mb-2.5 px-1">
+              <SectionLabel tone="source">Pipeline</SectionLabel>
+            </div>
+            <dl className="overflow-hidden rounded-2xl border border-sky-200/60 bg-sky-100/30">
               {pipelineStats.map((s, i) => (
                 <div
                   key={s.label}
                   className={cn(
                     "flex items-center justify-between px-3.5 py-2.5",
-                    i > 0 && "border-t border-neutral-100",
+                    i > 0 && "border-t border-sky-200/50",
                   )}
                 >
-                  <dt className="text-[12px] text-neutral-500">{s.label}</dt>
-                  <dd className="text-[12px] font-semibold tabular-nums tracking-[-0.01em] text-neutral-900">
+                  <dt className="text-[12px] text-[#0570b0]/70">{s.label}</dt>
+                  <dd className="text-[12px] font-semibold tabular-nums tracking-[-0.01em] text-[#0570b0]">
                     {s.value}
                   </dd>
                 </div>
@@ -869,8 +924,8 @@ export default function ChatPage() {
       </aside>
 
       {/* ───────────────────────── Main ───────────────────────── */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[57px] shrink-0 items-center justify-between border-b border-neutral-200/70 bg-neutral-50/80 px-5 backdrop-blur-md">
+      <div className="relative isolate flex min-w-0 flex-1 flex-col">
+        <header className="relative z-10 flex h-[57px] shrink-0 items-center justify-between border-b border-neutral-200/70 bg-neutral-50/70 px-5 backdrop-blur-md">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -893,12 +948,23 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <div className="scroll-fade flex-1 overflow-y-auto px-5">
+        {/* A pastel wash in the landing page's own hues, sitting behind the
+            conversation. Fixed and pointer-transparent so it never interferes
+            with scrolling or hit-testing. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60rem_28rem_at_18%_-4rem,rgba(123,53,240,0.09),transparent_60%),radial-gradient(52rem_26rem_at_88%_6rem,rgba(5,134,210,0.10),transparent_62%),radial-gradient(46rem_24rem_at_50%_105%,rgba(53,148,98,0.09),transparent_60%)]"
+        />
+
+        <div className="scroll-fade relative flex-1 overflow-y-auto px-5">
           <div className="mx-auto max-w-[46rem] space-y-6 py-8">
             {messages.length === 0 && (
               <div className="flex flex-col items-center px-2 pt-[10vh] text-center">
-                <h1 className="max-w-[20rem] text-[2rem] font-medium leading-[1.05] tracking-[-0.04em] text-neutral-950 sm:max-w-lg sm:text-[2.75rem] sm:tracking-[-0.045em]">
-                  Turn a cryptic error code into a fix.
+                {/* Two-tone heading, the same device the landing page's bento
+                    cards use — accent line first, dark line under it. */}
+                <h1 className="max-w-[20rem] text-[2rem] font-medium leading-[1.05] tracking-[-0.04em] sm:max-w-lg sm:text-[2.75rem] sm:tracking-[-0.045em]">
+                  <span className="block text-[#17152A]">Turn a cryptic error code</span>
+                  <span className="block text-[#359462]">into a fix.</span>
                 </h1>
                 <p className="mt-4 max-w-[24rem] text-[14px] font-medium leading-[1.55] tracking-[-0.02em] text-[#6D6878] sm:text-[15px]">
                   Type an error code, a symptom, or a machine name. Every answer comes back with the
@@ -920,22 +986,38 @@ export default function ChatPage() {
                   </>
                 ) : (
                   <>
+                    {/* A four-tile echo of the landing page's bento, in the same
+                        five colour families, so the two pages read as one product. */}
                     <div className="mt-10 grid w-full max-w-md grid-cols-2 gap-2.5 sm:grid-cols-4">
                       {[
-                        { label: "Manuals", value: (stats?.documents ?? 0).toLocaleString() },
-                        { label: "Chunks", value: (stats?.chunks ?? 0).toLocaleString() },
-                        { label: "Codes", value: (stats?.faults ?? 0).toLocaleString() },
+                        { label: "Manuals", value: (stats?.documents ?? 0).toLocaleString(), tone: "code" as const },
+                        { label: "Chunks", value: (stats?.chunks ?? 0).toLocaleString(), tone: "source" as const },
+                        { label: "Codes", value: (stats?.faults ?? 0).toLocaleString(), tone: "causes" as const },
                         // A vector dimension is not a quantity — never comma-grouped.
-                        { label: "Dims", value: String(stats?.dims ?? 0) },
+                        { label: "Dims", value: String(stats?.dims ?? 0), tone: "action" as const },
                       ].map((s) => (
                         <div
                           key={s.label}
-                          className="rounded-2xl border border-neutral-200/70 bg-white px-3 py-3 text-left"
+                          className={cn(
+                            "rounded-2xl border px-3.5 py-3 text-left",
+                            TONE[s.tone].bg,
+                            TONE[s.tone].border,
+                          )}
                         >
-                          <p className="text-[19px] font-medium tabular-nums leading-none tracking-[-0.03em] text-neutral-950">
+                          <p
+                            className={cn(
+                              "text-[20px] font-semibold tabular-nums leading-none tracking-[-0.03em]",
+                              TONE[s.tone].ink,
+                            )}
+                          >
                             {s.value}
                           </p>
-                          <p className="mt-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-neutral-400">
+                          <p
+                            className={cn(
+                              "mt-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] opacity-70",
+                              TONE[s.tone].ink,
+                            )}
+                          >
                             {s.label}
                           </p>
                         </div>
@@ -945,15 +1027,23 @@ export default function ChatPage() {
                     {/* Stacked on a narrow screen so four pills of different
                         widths don't read as scattered debris. */}
                     <div className="mt-8 flex w-full max-w-lg flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
-                      {SUGGESTIONS.map((q) => (
-                        <button
-                          key={q}
-                          onClick={() => handleSubmit(q)}
-                          className="rounded-full border border-neutral-200/80 bg-white px-3.5 py-2 text-[12.5px] font-medium tracking-[-0.01em] text-neutral-600 transition-colors hover:border-neutral-950 hover:text-neutral-950"
-                        >
-                          {q}
-                        </button>
-                      ))}
+                      {SUGGESTIONS.map((q, i) => {
+                        const tone = SUGGESTION_TONES[i % SUGGESTION_TONES.length];
+                        return (
+                          <button
+                            key={q}
+                            onClick={() => handleSubmit(q)}
+                            className={cn(
+                              "rounded-full border px-3.5 py-2 text-[12.5px] font-medium tracking-[-0.01em] transition-all hover:-translate-y-px hover:shadow-[0_6px_16px_-8px_rgba(16,15,25,0.3)]",
+                              TONE[tone].bg,
+                              TONE[tone].border,
+                              TONE[tone].ink,
+                            )}
+                          >
+                            {q}
+                          </button>
+                        );
+                      })}
                     </div>
                   </>
                 )}
@@ -965,8 +1055,8 @@ export default function ChatPage() {
             ))}
 
             {loading && (
-              <div className="flex items-center gap-2.5 text-[13px] font-medium text-neutral-500">
-                <Loader2 className="size-3.5 animate-spin text-neutral-400" />
+              <div className="inline-flex items-center gap-2.5 rounded-full border border-sky-200/70 bg-sky-100/50 px-3.5 py-2 text-[13px] font-medium text-[#0570b0]">
+                <Loader2 className="size-3.5 animate-spin" />
                 <span className="shimmer">Searching the manuals…</span>
               </div>
             )}
@@ -983,7 +1073,7 @@ export default function ChatPage() {
             }}
             className="mx-auto max-w-[46rem]"
           >
-            <div className="rounded-[26px] border border-neutral-200/80 bg-white p-2 shadow-[0_1px_2px_rgba(16,15,25,0.04),0_16px_40px_-16px_rgba(16,15,25,0.14)] transition-colors focus-within:border-neutral-400">
+            <div className="rounded-[26px] border border-neutral-200/80 bg-white p-2 shadow-[0_1px_2px_rgba(16,15,25,0.04),0_16px_40px_-16px_rgba(16,15,25,0.14)] transition-all focus-within:border-sky-300 focus-within:shadow-[0_0_0_4px_rgba(5,134,210,0.08),0_16px_40px_-16px_rgba(16,15,25,0.16)]">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -1016,7 +1106,7 @@ export default function ChatPage() {
                   onClick={() => fileInputRef.current?.click()}
                   disabled={upload.state === "busy"}
                   title="Upload a PDF manual"
-                  className="flex size-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-40"
+                  className="flex size-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-[#eeffe8] hover:text-[#2f7c53] disabled:opacity-40"
                 >
                   <Plus className="size-4" />
                 </button>
@@ -1029,7 +1119,7 @@ export default function ChatPage() {
                     "flex size-8 items-center justify-center rounded-full transition-colors",
                     listening
                       ? "bg-[#c64e27] text-white"
-                      : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700",
+                      : "text-neutral-400 hover:bg-purple-100/70 hover:text-[#5f24c4]",
                   )}
                 >
                   <Mic className={cn("size-4", listening && "animate-pulse")} />
