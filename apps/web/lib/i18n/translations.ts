@@ -185,6 +185,11 @@ export interface Dictionary {
     enterToSend: string;
     uploadTitle: string;
     voiceInput: string;
+    attachImageTitle: string;
+    imageCaption: string;
+    visionStepReading: string;
+    visionStepMatching: string;
+    visionStepDrafting: string;
     answersFooter: string;
     howThisWasAnswered: string;
     searchingManuals: string;
@@ -420,6 +425,11 @@ const en: Dictionary = {
     enterToSend: "Enter to send · Shift+Enter for a new line",
     uploadTitle: "Upload a PDF manual",
     voiceInput: "Voice input",
+    attachImageTitle: "Attach a photo of the display",
+    imageCaption: "Photo of the machine display",
+    visionStepReading: "Reading the display…",
+    visionStepMatching: "Matching the visible code against your manuals…",
+    visionStepDrafting: "Drafting the response…",
     answersFooter: "Answers are retrieved from your loaded manuals and cited by page. Verify before acting on live equipment.",
 
     howThisWasAnswered: "How this was answered",
@@ -665,6 +675,11 @@ const hi: Dictionary = {
     enterToSend: "भेजने के लिए Enter · नई लाइन के लिए Shift+Enter",
     uploadTitle: "PDF मैन्युअल अपलोड करें",
     voiceInput: "आवाज़ इनपुट",
+    attachImageTitle: "डिस्प्ले की फोटो अटैच करें",
+    imageCaption: "मशीन के डिस्प्ले की फोटो",
+    visionStepReading: "डिस्प्ले पढ़ा जा रहा है…",
+    visionStepMatching: "दिख रहे कोड को आपके मैन्युअल से मिलाया जा रहा है…",
+    visionStepDrafting: "उत्तर तैयार किया जा रहा है…",
     answersFooter:
       "उत्तर आपके लोड किए गए मैन्युअल से लिए जाते हैं और पेज के अनुसार उद्धृत होते हैं। असली मशीन पर काम करने से पहले सत्यापित करें।",
 
@@ -906,6 +921,11 @@ const mr: Dictionary = {
     enterToSend: "पाठवण्यासाठी Enter · नवीन ओळीसाठी Shift+Enter",
     uploadTitle: "PDF मॅन्युअल अपलोड करा",
     voiceInput: "आवाज इनपुट",
+    attachImageTitle: "डिस्प्लेचा फोटो जोडा",
+    imageCaption: "मशीनच्या डिस्प्लेचा फोटो",
+    visionStepReading: "डिस्प्ले वाचला जात आहे…",
+    visionStepMatching: "दिसणारा कोड तुमच्या मॅन्युअल्सशी जुळवला जात आहे…",
+    visionStepDrafting: "उत्तर तयार केले जात आहे…",
     answersFooter:
       "उत्तरे तुमच्या लोड केलेल्या मॅन्युअल्समधून घेतली जातात आणि पृष्ठानुसार उद्धृत केली जातात. प्रत्यक्ष उपकरणावर कृती करण्यापूर्वी पडताळणी करा.",
 

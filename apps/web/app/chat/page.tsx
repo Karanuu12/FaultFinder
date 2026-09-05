@@ -59,7 +59,64 @@ interface ChatMessage {
   structured?: CitedAnswer;
   /** The pipeline stages that produced this answer, kept so it stays inspectable. */
   trace?: QueryStep[];
+  /** Set only on a user turn that attached a photo via the composer's image flow below. */
+  imageDataUrl?: string;
 }
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * mock_reply — EDIT THIS for your demo.
+ * ─────────────────────────────────────────────────────────────────────────
+ * The plus icon in the composer no longer opens the PDF picker (that stays
+ * in the sidebar) -- it now asks for a PHOTO of a machine's display, the way
+ * a technician would point a phone at an HMI showing a fault. There is no
+ * real vision model behind it and none is planned for this pass: the photo
+ * is only ever shown back in the chat bubble, never sent anywhere. Whatever
+ * is typed into `mock_reply` below is what appears as the "answer" every
+ * time a photo is attached, rendered through the exact same card as a real
+ * cited answer so it demos convincingly.
+ *
+ * To point this at your own demo image: replace the fields below with
+ * whatever that image actually shows. Everything here is plain data, in the
+ * same shape a real answer already comes back in --
+ *   - `error_code`   the code visible on the screen (omit if there isn't one)
+ *   - `meaning`      one sentence: what that code means
+ *   - `probable_causes` short bullet list
+ *   - `corrective_action` numbered steps, in the order to try them
+ *   - `citations`    leave EMPTY unless you know the exact document_id/page
+ *                     of something actually loaded right now -- a citation
+ *                     pointing at nothing real will 404 when clicked
+ *   - `confidence`   "high" | "medium" | "low"
+ *
+ * This is independent of the page's language switcher on purpose: it is one
+ * canned example you control directly, not machine-translated three ways.
+ */
+const mock_reply: CitedAnswer = {
+  error_code: "ERR 404",
+  meaning:
+    "ERR 404 means the HMI panel has lost communication with the drive controller — the display is not reporting a drive fault, it's reporting that it can no longer reach the drive at all.",
+  probable_causes: [
+    "The communication cable between the HMI and the drive controller is loose, unplugged, or damaged.",
+    "The drive controller is powered off or has faulted upstream, so it isn't responding on the bus.",
+    "A communication parameter (baud rate, node address, or protocol) no longer matches between the HMI and the drive.",
+  ],
+  corrective_action: [
+    { step: 1, action: "Check that the communication cable is fully seated at both the HMI and the drive controller." },
+    { step: 2, action: "Confirm the drive controller is powered on and not showing its own fault indicator." },
+    { step: 3, action: "Verify the HMI's communication settings (baud rate / node address) match the drive's configuration." },
+    { step: 4, action: "Power-cycle the HMI and the drive controller together, then wait for the link to re-establish." },
+  ],
+  citations: [],
+  confidence: "high",
+  refusals: [],
+};
+
+/** Fixed, quick timeline for the mock reply above -- not measured, just paced to feel like a real analysis rather than an instant canned reply. */
+const MOCK_VISION_STEPS: { key: "visionStepReading" | "visionStepMatching" | "visionStepDrafting"; afterMs: number }[] = [
+  { key: "visionStepReading", afterMs: 550 },
+  { key: "visionStepMatching", afterMs: 750 },
+  { key: "visionStepDrafting", afterMs: 650 },
+];
 
 /**
  * The stages of a query, as they actually complete server-side.
@@ -540,8 +597,19 @@ function MessageBubble({
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-[20px] rounded-br-[6px] bg-neutral-950 px-4 py-2.5 text-[14px] leading-[1.55] tracking-[-0.01em] text-white sm:max-w-[75%]">
-          <p className="whitespace-pre-wrap">{message.content}</p>
+        <div className="max-w-[85%] space-y-1.5 sm:max-w-[75%]">
+          {message.imageDataUrl && (
+            <img
+              src={message.imageDataUrl}
+              alt=""
+              className="ml-auto max-h-64 rounded-[20px] rounded-br-[6px] border border-neutral-200/70 object-cover"
+            />
+          )}
+          {message.content && (
+            <div className="rounded-[20px] rounded-br-[6px] bg-neutral-950 px-4 py-2.5 text-[14px] leading-[1.55] tracking-[-0.01em] text-white">
+              <p className="whitespace-pre-wrap">{message.content}</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -705,6 +773,7 @@ export default function ChatPage() {
   const [openCitation, setOpenCitation] = useState<Citation | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   /**
@@ -901,6 +970,49 @@ export default function ChatPage() {
       setUpload({ state: "busy", message: t("chat.connectionInterrupted", { name: file.name }) });
     };
     xhr.send(body);
+  };
+
+  /**
+   * The composer's plus icon, mocked. Reads the photo client-side (FileReader
+   * -- no upload, no network call, nothing leaves the browser) and shows it
+   * back in the user's own bubble, then replays a short fixed timeline into
+   * the SAME QueryTrace/MessageBubble components a real answer uses, before
+   * revealing `mock_reply`. Nothing here calls a vision model; `mock_reply`
+   * above is the one thing to edit for a real demo image.
+   */
+  const handleImageUpload = async (file: File) => {
+    if (loading) return;
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: t("chat.imageCaption"), imageDataUrl: dataUrl },
+    ]);
+    setLoading(true);
+    setLiveTraceOpen(true);
+    setLiveTrace([]);
+
+    const startedAt = Date.now();
+    const steps: QueryStep[] = [];
+    for (const { key, afterMs } of MOCK_VISION_STEPS) {
+      await new Promise((r) => setTimeout(r, afterMs));
+      steps.push({ label: t(`chat.${key}`), ms: Date.now() - startedAt });
+      setLiveTrace([...steps]);
+    }
+    await new Promise((r) => setTimeout(r, 350));
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: mock_reply.meaning, structured: mock_reply, trace: steps },
+    ]);
+    setLoading(false);
+    setLiveTrace([]);
   };
 
   const handleSubmit = async (text: string) => {
@@ -1368,13 +1480,28 @@ export default function ChatPage() {
               <div className="flex items-center gap-1.5 px-1 pt-1">
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={upload.state === "busy"}
-                  title={t("chat.uploadTitle")}
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={loading}
+                  title={t("chat.attachImageTitle")}
                   className="flex size-8 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-40"
                 >
                   <Plus className="size-4" />
                 </button>
+                {/* capture="environment" is a hint, not a requirement: on a
+                    phone it offers the rear camera directly ("point it at the
+                    display"); on desktop it's just a normal file picker. */}
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) handleImageUpload(file);
+                  }}
+                />
                 <button
                   type="button"
                   onClick={startListening}
